@@ -1,3 +1,8 @@
+//
+// This ESP32 ARDUINO program is a Zibgee end device that will receive commands to be translated into the IR remote codes for a 
+// MISTUBISHI HEATE PUMP. THis is work in progress for a Home Assistant end point that you attach near the IR sensor the the
+// Mitsubishi heat pump and that can be battery powered.
+//
 
 
 // M I T S U B I S H I  IR stuff follows
@@ -64,7 +69,6 @@ typedef enum HvacProfileMode {
 #define HVAC_MITSUBISHI_RPT_MARK    440
 #define HVAC_MITSUBISHI_RPT_SPACE   17100 // Above original iremote limit
 
-
 /****************************************************************************
 /* Send IR command to Mitsubishi HVAC - sendHvacMitsubishi
 /***************************************************************************/
@@ -76,8 +80,6 @@ void sendHvacMitsubishi(
   int                     OFF                  // Example false
 )
 {
-
-
   byte mask = 1; //our bitmask
   byte data[18] = { 0x23, 0xCB, 0x26, 0x01, 0x00, 0x20, 0x08, 0x06, 0x30, 0x45, 0x67, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x1F };
   // data array is a valid trame, only byte to be chnaged will be updated.
@@ -233,13 +235,22 @@ void setupIR() {
 
 // Each cluster within the device has its own id, 10,11,12 ...
 
-ZigbeeLight      zbLight1     = ZigbeeLight(10);
-ZigbeeLight      zbLight2     = ZigbeeLight(11);
-ZigbeeFanControl zbFanControl = ZigbeeFanControl(12);
+ZigbeeLight       zbLight1     = ZigbeeLight(10);
+ZigbeeLight       zbLight2     = ZigbeeLight(11);
+ZigbeeFanControl  zbFanControl = ZigbeeFanControl(12);
+ZigbeePowerOutlet zbOutlet     = ZigbeePowerOutlet(13);
+ZigbeeBinary      zbHotCold    = ZigbeeBinary(14);
 
-bool             lightStatus1 = 0;
-bool             lightStatus2 = 0;
-ZigbeeFanMode    fanStatus    = FAN_MODE_OFF;
+bool             lightStatus1  = 0;
+bool             lightStatus2  = 0;
+ZigbeeFanMode    fanStatus     = FAN_MODE_OFF;
+bool             powerStatus   = 0;
+bool             hotColdStatus  = 0;
+
+void displayPowerStatus()
+{
+     Serial.println(powerStatus ? "POWER ON" : "POWER OFF");
+}
 
 void displayLightStatus1()
 {
@@ -265,6 +276,13 @@ void displayFanStatus()
      Serial.println(buf);
 }
 
+void displayHotColdStatus()
+{    char buf[256];
+     sprintf(buf,"HOT COLD STATUS = %s (%x)\n", hotColdStatus ? "COLD" : "HOT", (unsigned int) hotColdStatus);
+     Serial.println(buf);
+}
+
+
 void setLight1(bool value)
 {
      lightStatus1 = value;
@@ -279,7 +297,7 @@ void setLight1(bool value)
 void setLight2(bool value)
 {
      lightStatus2 = value;
-     Serial.print("HA"); displayLightStatus2();
+     Serial.print("HA=> "); displayLightStatus2();
 }
 
 
@@ -287,7 +305,19 @@ void setFanMode(ZigbeeFanMode mode);   // Compiler seems to need this or gets co
 void setFanMode(ZigbeeFanMode mode)
 {
   fanStatus = (ZigbeeFanMode) (((unsigned int) mode) & 0xff);  // we get garbage bytes at the top
-  Serial.print("HA"); displayFanStatus();
+  Serial.print("HA=> "); displayFanStatus();
+}
+
+void setPower(bool value)
+{
+     powerStatus = value;
+     Serial.print("HA=> "); displayPowerStatus();
+}
+
+void setHotCold(bool state)
+{
+     hotColdStatus = state;
+     Serial.print("HA=> "); displayHotColdStatus();
 }
 
 // BASIC ARDUINO SETUP
@@ -300,9 +330,12 @@ void setup() {
   setupIR();
   Serial.println("MITS IR setup");
   Serial.println("RiverView Zigbee light");
+  //
   zbLight1.setManufacturerAndModel("RiverView", "ESP32C6Light");
   zbLight2.setManufacturerAndModel("RiverView", "ESP32C6Light");
   zbFanControl.setManufacturerAndModel("RiverView", "ESP32C6Light");
+  zbOutlet.setManufacturerAndModel("RiverView", "ESP32C6Light");
+  zbHotCold.setManufacturerAndModel("RiverView", "ESP32C6Light");
 
   Serial.println("1");
   // Set minimum and maximum temperature measurement value
@@ -310,11 +343,19 @@ void setup() {
   zbLight2.onLightChange(setLight2);
   zbFanControl.setFanModeSequence(FAN_MODE_SEQUENCE_LOW_MED_HIGH);
   zbFanControl.onFanModeChange(setFanMode);
+  zbOutlet.onPowerOutletChange(setPower);
+
+  zbHotCold.addBinaryOutput();
+  zbHotCold.setBinaryOutputApplication(BINARY_OUTPUT_APPLICATION_TYPE_HVAC_FAN);
+  zbHotCold.setBinaryOutputDescription("Heat Cool Switch");
+  zbHotCold.onBinaryOutputChange(setHotCold);
 
   Serial.println("2");
   Zigbee.addEndpoint(&zbLight1);
   Zigbee.addEndpoint(&zbLight2);
   Zigbee.addEndpoint(&zbFanControl);
+  Zigbee.addEndpoint(&zbOutlet);
+  Zigbee.addEndpoint(&zbHotCold);
 
   Serial.println("3");
   delay(1000);
@@ -344,8 +385,10 @@ void setup() {
 // NOTHING TO DO IN MAIN LOOP ITS ALL CALLBACK BASED SO JUST PRINT STATUS.
 
 void loop() {
+   displayPowerStatus();
    displayLightStatus1();
    displayLightStatus2();
    displayFanStatus();
+   displayHotColdStatus();
    delay(10000);
 }
