@@ -214,7 +214,6 @@ void space(int time) {
   if (time > 0) delayMicroseconds(time);
 }
 
-
 void setupIR() {
   // put your setup code here, to run once:
   IRpin=10;
@@ -232,99 +231,105 @@ void setupIR() {
 
 #include "Zigbee.h"
 
+// 
+// These are the EP control entities.
+//
+ZigbeePowerOutlet zbOutlet      = ZigbeePowerOutlet(10);    // Power on/off
+ZigbeeBinary      zbHotCold     = ZigbeeBinary(11);         // Heat or cooling
+ZigbeeAnalog      zbTemp        = ZigbeeAnalog(12);         // Desired temperature
+ZigbeeFanControl  zbFanControl  = ZigbeeFanControl(13);     // How the fans operate
 
-// Each cluster within the device has its own id, 10,11,12 ...
+//
+// These are the variables that maintain the state of what HA as asked to be
+// set.
+//
+ZigbeeFanMode     ha_fanStatus     = FAN_MODE_OFF;
+bool              ha_powerStatus   = 0;
+bool              ha_hotColdStatus = 0;
+float             ha_tempStatus    = 0;
 
-ZigbeeLight       zbLight1      = ZigbeeLight(10);
-ZigbeeLight       zbLight2      = ZigbeeLight(11);
-ZigbeeFanControl  zbFanControl  = ZigbeeFanControl(12);
-ZigbeePowerOutlet zbOutlet      = ZigbeePowerOutlet(13);
-ZigbeeBinary      zbHotCold     = ZigbeeBinary(14);
-ZigbeeAnalog      zbTemp        = ZigbeeAnalog(15);
-
-bool              lightStatus1  = 0;
-bool              lightStatus2  = 0;
-ZigbeeFanMode     fanStatus     = FAN_MODE_OFF;
-bool              powerStatus   = 0;
-bool              hotColdStatus = 0;
-float             tempStatus    = 0;
+//
+// Send the Heat Pump the proper commands to synchronize with what HA as asked. Basically convert from the above ha_ variables
+// to corresponding hv_ variables and call the send function.
+//
+void syncHeadPump()
+{
+    HvacMode hv_mode;
+    switch(ha_hotColdStatus) {
+         case 0: hv_mode = HVAC_HOT;  break;
+         case 1: hv_mode = HVAC_COLD; break;
+         default:
+                 Serial.printf("Invalid power status =% d\n", ha_hotColdStatus);
+                 return;
+    }
+    //
+    int hv_powerOff = ha_powerStatus ? 1 : 0;
+    int hv_temp = ha_tempStatus;
+    //
+    HvacFanMode hv_fanMode;
+    switch (ha_fanStatus) {
+          case FAN_MODE_OFF:    hv_fanMode = FAN_SPEED_SILENT; break;
+          case FAN_MODE_LOW:    hv_fanMode = FAN_SPEED_1;      break; 
+          case FAN_MODE_MEDIUM: hv_fanMode = FAN_SPEED_3;      break; 
+          case FAN_MODE_HIGH:   hv_fanMode = FAN_SPEED_5;      break; 
+          case FAN_MODE_ON:     hv_fanMode = FAN_SPEED_AUTO;   break;
+          default:
+                 Serial.printf("Invalid fan status =% d\n", ha_fanStatus);
+                 return;
+     }
+    //
+    sendHvacMitsubishi(hv_mode, hv_temp, hv_fanMode, VANNE_AUTO_MOVE, hv_powerOff);
+}
 
 void displayPowerStatus()
 {
-     Serial.println(powerStatus ? "POWER ON" : "POWER OFF");
-}
-
-void displayLightStatus1()
-{
-     Serial.println(lightStatus1 ? "LIGHT1 ON" : "LIGHT1 OFF");
-}
-
-void displayLightStatus2()
-{
-     Serial.println(lightStatus2 ? "LIGHT2 ON" : "LIGHT2 OFF");
+     Serial.println(ha_powerStatus ? "POWER ON" : "POWER OFF"); 
 }
 
 void displayFanStatus()
 {     
      char *s = "UNK";
-     switch (fanStatus) {
+     switch (ha_fanStatus) {
           case FAN_MODE_OFF:    s = "OFF";    break;
           case FAN_MODE_LOW:    s = "LOW";    break; 
           case FAN_MODE_MEDIUM: s = "MEDIUM"; break; 
           case FAN_MODE_HIGH:   s = "HIGH";   break; 
           case FAN_MODE_ON:     s = "ON";     break;
      }
-     Serial.printf("FAN STATUS = %s (%x)\n", s, (unsigned int) fanStatus);
+     Serial.printf("FAN STATUS = %s (%x)\n", s, (unsigned int) ha_fanStatus);
 }
 
 void displayHotColdStatus()
 {    
-     Serial.printf("HOT COLD STATUS = %s (%x)\n", hotColdStatus ? "COLD" : "HOT", (unsigned int) hotColdStatus);
+     Serial.printf("HOT COLD STATUS = %s (%x)\n", ha_hotColdStatus ? "COLD" : "HOT", (unsigned int) ha_hotColdStatus);
 }
 
 void displayTempStatus()
 {    
-     Serial.printf("TEMP STATUS = %f\n", tempStatus);
-}
-
-void setLight1(bool value)
-{
-     lightStatus1 = value;
-     Serial.print("HA=> "); displayLightStatus1();
-     if (lightStatus1) {
-         sendHvacMitsubishi(HVAC_HOT, 21, FAN_SPEED_AUTO, VANNE_AUTO_MOVE, false /* NOT OFF */);
-     } else {
-         sendHvacMitsubishi(HVAC_HOT, 21, FAN_SPEED_AUTO, VANNE_AUTO_MOVE, true /* YES OFF */);
-     }
-}
-
-void setLight2(bool value)
-{
-     lightStatus2 = value;
-     Serial.print("HA=> "); displayLightStatus2();
+     Serial.printf("TEMP STATUS = %f\n", ha_tempStatus);
 }
 
 void setFanMode(ZigbeeFanMode mode);   // Compiler seems to need this or gets confused by enum
 void setFanMode(ZigbeeFanMode mode)
 {
-     fanStatus = (ZigbeeFanMode) (((unsigned int) mode) & 0xff);  // we get garbage bytes at the top
+     ha_fanStatus = (ZigbeeFanMode) (((unsigned int) mode) & 0xff);  // we get garbage bytes at the top
      Serial.print("HA=> "); displayFanStatus();
 }
 
 void setPower(bool value)
 {
-     powerStatus = value;
+     ha_powerStatus = value;
      Serial.print("HA=> "); displayPowerStatus();
 }
 
 void setHotCold(bool state)
 {
-     hotColdStatus = state;
+     ha_hotColdStatus = state;
      Serial.print("HA=> "); displayHotColdStatus();
 }
 
 void setTemp(float value)
-{    tempStatus = value;
+{    ha_tempStatus = value;
      Serial.print("HA=> "); displayTempStatus();
 }
 
@@ -339,22 +344,19 @@ void setup() {
   Serial.println("MITS IR setup");
   Serial.println("RiverView Zigbee light");
   //
-  zbLight1.setManufacturerAndModel("RiverView", "ESP32C6Light");
-  zbLight2.setManufacturerAndModel("RiverView", "ESP32C6Light");
   zbFanControl.setManufacturerAndModel("RiverView", "ESP32C6Light");
   zbOutlet.setManufacturerAndModel("RiverView", "ESP32C6Light");
   zbHotCold.setManufacturerAndModel("RiverView", "ESP32C6Light");
+  zbTemp.setManufacturerAndModel("RiverView", "ESP32C6Light");
 
   Serial.println("1");
   // Set minimum and maximum temperature measurement value
-  zbLight1.onLightChange(setLight1);
-  zbLight2.onLightChange(setLight2);
   zbFanControl.setFanModeSequence(FAN_MODE_SEQUENCE_LOW_MED_HIGH);
   zbFanControl.onFanModeChange(setFanMode);
   zbOutlet.onPowerOutletChange(setPower);
 
   zbHotCold.addBinaryOutput();
-  zbHotCold.setBinaryOutputApplication(BINARY_OUTPUT_APPLICATION_TYPE_HVAC_FAN);
+  zbHotCold.setBinaryOutputApplication(BINARY_OUTPUT_APPLICATION_TYPE_HVAC_OTHER);
   zbHotCold.setBinaryOutputDescription("Heat Cool Switch");
   zbHotCold.onBinaryOutputChange(setHotCold);
   //
@@ -366,12 +368,11 @@ void setup() {
   zbTemp.onAnalogOutputChange(setTemp);
   //
   Serial.println("2");
-  Zigbee.addEndpoint(&zbLight1);
-  Zigbee.addEndpoint(&zbLight2);
-  Zigbee.addEndpoint(&zbFanControl);
+  
   Zigbee.addEndpoint(&zbOutlet);
   Zigbee.addEndpoint(&zbHotCold);
   Zigbee.addEndpoint(&zbTemp);
+  Zigbee.addEndpoint(&zbFanControl);
 
   Serial.println("3");
   delay(1000);
@@ -394,17 +395,26 @@ void setup() {
   Serial.println("Successfully connected to Zigbee network");
   // Delay approx 1s (may be adjusted) to allow establishing proper connection with coordinator, needed for sleepy devices
   delay(1000);
-  // Call the function to measure temperature and put the device to deep sleep
+
+  ha_powerStatus   = zbOutlet.getPowerOutletState();     
+  ha_hotColdStatus = zbHotCold.getBinaryOutput();
+  ha_tempStatus    = zbTemp.getAnalogOutput();
+  ha_fanStatus     = zbFanControl.getFanMode();
+  
+  Serial.println("Queried initial state values which follow");
+  displayPowerStatus();
+  displayHotColdStatus();
+  displayTempStatus();
+  displayFanStatus();
+
 }
 
 // NOTHING TO DO IN MAIN LOOP ITS ALL CALLBACK BASED SO JUST PRINT STATUS.
 
 void loop() {
    displayPowerStatus();
-   displayLightStatus1();
-   displayLightStatus2();
-   displayFanStatus();
    displayHotColdStatus();
    displayTempStatus();
+   displayFanStatus();
    delay(10000);
 }
