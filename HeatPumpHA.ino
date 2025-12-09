@@ -235,17 +235,19 @@ void setupIR() {
 
 // Each cluster within the device has its own id, 10,11,12 ...
 
-ZigbeeLight       zbLight1     = ZigbeeLight(10);
-ZigbeeLight       zbLight2     = ZigbeeLight(11);
-ZigbeeFanControl  zbFanControl = ZigbeeFanControl(12);
-ZigbeePowerOutlet zbOutlet     = ZigbeePowerOutlet(13);
-ZigbeeBinary      zbHotCold    = ZigbeeBinary(14);
+ZigbeeLight       zbLight1      = ZigbeeLight(10);
+ZigbeeLight       zbLight2      = ZigbeeLight(11);
+ZigbeeFanControl  zbFanControl  = ZigbeeFanControl(12);
+ZigbeePowerOutlet zbOutlet      = ZigbeePowerOutlet(13);
+ZigbeeBinary      zbHotCold     = ZigbeeBinary(14);
+ZigbeeAnalog      zbTemp        = ZigbeeAnalog(15);
 
-bool             lightStatus1  = 0;
-bool             lightStatus2  = 0;
-ZigbeeFanMode    fanStatus     = FAN_MODE_OFF;
-bool             powerStatus   = 0;
-bool             hotColdStatus  = 0;
+bool              lightStatus1  = 0;
+bool              lightStatus2  = 0;
+ZigbeeFanMode     fanStatus     = FAN_MODE_OFF;
+bool              powerStatus   = 0;
+bool              hotColdStatus = 0;
+float             tempStatus    = 0;
 
 void displayPowerStatus()
 {
@@ -259,11 +261,11 @@ void displayLightStatus1()
 
 void displayLightStatus2()
 {
-     Serial.println(lightStatus2 ? "LIGHT1 ON" : "LIGHT1 OFF");
+     Serial.println(lightStatus2 ? "LIGHT2 ON" : "LIGHT2 OFF");
 }
 
 void displayFanStatus()
-{    char buf[256];
+{     
      char *s = "UNK";
      switch (fanStatus) {
           case FAN_MODE_OFF:    s = "OFF";    break;
@@ -272,25 +274,27 @@ void displayFanStatus()
           case FAN_MODE_HIGH:   s = "HIGH";   break; 
           case FAN_MODE_ON:     s = "ON";     break;
      }
-     sprintf(buf,"FAN STATUS = %s (%x)\n", s, (unsigned int) fanStatus);
-     Serial.println(buf);
+     Serial.printf("FAN STATUS = %s (%x)\n", s, (unsigned int) fanStatus);
 }
 
 void displayHotColdStatus()
-{    char buf[256];
-     sprintf(buf,"HOT COLD STATUS = %s (%x)\n", hotColdStatus ? "COLD" : "HOT", (unsigned int) hotColdStatus);
-     Serial.println(buf);
+{    
+     Serial.printf("HOT COLD STATUS = %s (%x)\n", hotColdStatus ? "COLD" : "HOT", (unsigned int) hotColdStatus);
 }
 
+void displayTempStatus()
+{    
+     Serial.printf("TEMP STATUS = %f\n", tempStatus);
+}
 
 void setLight1(bool value)
 {
      lightStatus1 = value;
-     Serial.print("HA"); displayLightStatus1();
+     Serial.print("HA=> "); displayLightStatus1();
      if (lightStatus1) {
-        sendHvacMitsubishi(HVAC_HOT, 21, FAN_SPEED_AUTO, VANNE_AUTO_MOVE, false /* NOT OFF */);
+         sendHvacMitsubishi(HVAC_HOT, 21, FAN_SPEED_AUTO, VANNE_AUTO_MOVE, false /* NOT OFF */);
      } else {
-        sendHvacMitsubishi(HVAC_HOT, 21, FAN_SPEED_AUTO, VANNE_AUTO_MOVE, true /* YES OFF */);
+         sendHvacMitsubishi(HVAC_HOT, 21, FAN_SPEED_AUTO, VANNE_AUTO_MOVE, true /* YES OFF */);
      }
 }
 
@@ -300,12 +304,11 @@ void setLight2(bool value)
      Serial.print("HA=> "); displayLightStatus2();
 }
 
-
 void setFanMode(ZigbeeFanMode mode);   // Compiler seems to need this or gets confused by enum
 void setFanMode(ZigbeeFanMode mode)
 {
-  fanStatus = (ZigbeeFanMode) (((unsigned int) mode) & 0xff);  // we get garbage bytes at the top
-  Serial.print("HA=> "); displayFanStatus();
+     fanStatus = (ZigbeeFanMode) (((unsigned int) mode) & 0xff);  // we get garbage bytes at the top
+     Serial.print("HA=> "); displayFanStatus();
 }
 
 void setPower(bool value)
@@ -318,6 +321,11 @@ void setHotCold(bool state)
 {
      hotColdStatus = state;
      Serial.print("HA=> "); displayHotColdStatus();
+}
+
+void setTemp(float value)
+{    tempStatus = value;
+     Serial.print("HA=> "); displayTempStatus();
 }
 
 // BASIC ARDUINO SETUP
@@ -349,13 +357,21 @@ void setup() {
   zbHotCold.setBinaryOutputApplication(BINARY_OUTPUT_APPLICATION_TYPE_HVAC_FAN);
   zbHotCold.setBinaryOutputDescription("Heat Cool Switch");
   zbHotCold.onBinaryOutputChange(setHotCold);
-
+  //
+  zbTemp.addAnalogOutput();
+  zbTemp.setAnalogOutputApplication(ESP_ZB_ZCL_AI_TEMPERATURE_OTHER);
+  zbTemp.setAnalogOutputDescription("Temperature C");
+  zbTemp.setAnalogOutputResolution(1);
+  zbTemp.setAnalogOutputMinMax(5, 30);  
+  zbTemp.onAnalogOutputChange(setTemp);
+  //
   Serial.println("2");
   Zigbee.addEndpoint(&zbLight1);
   Zigbee.addEndpoint(&zbLight2);
   Zigbee.addEndpoint(&zbFanControl);
   Zigbee.addEndpoint(&zbOutlet);
   Zigbee.addEndpoint(&zbHotCold);
+  Zigbee.addEndpoint(&zbTemp);
 
   Serial.println("3");
   delay(1000);
@@ -379,7 +395,6 @@ void setup() {
   // Delay approx 1s (may be adjusted) to allow establishing proper connection with coordinator, needed for sleepy devices
   delay(1000);
   // Call the function to measure temperature and put the device to deep sleep
-
 }
 
 // NOTHING TO DO IN MAIN LOOP ITS ALL CALLBACK BASED SO JUST PRINT STATUS.
@@ -390,5 +405,6 @@ void loop() {
    displayLightStatus2();
    displayFanStatus();
    displayHotColdStatus();
+   displayTempStatus();
    delay(10000);
 }
