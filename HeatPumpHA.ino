@@ -361,7 +361,6 @@ void setup() {
      zbTemp.setAnalogOutputResolution(1);
      zbTemp.setAnalogOutputMinMax(0, 30); 
      zbTemp.onAnalogOutputChange(setTemp);
-     zbTemp.setAnalogOutput(20);
      //
      Serial.println("Fan Selector cluster");
      zbFanControl.setManufacturerAndModel("RiverView", "ESP32C6Light");
