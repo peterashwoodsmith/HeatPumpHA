@@ -1,24 +1,52 @@
 //
 // This ESP32 ARDUINO program is a Zibgee end device that will receive commands to be translated into the IR remote codes for a 
-// MISTUBISHI HEATE PUMP. THis is work in progress for a Home Assistant end point that you attach near the IR sensor the the
+// MISTUBISHI HEATE PUMP. THis is work in progress for a Home Assistant end point that you attach near the IR sensor of the
 // Mitsubishi heat pump and that can be battery powered.
 //
+// The code has two major parts. The first is the IR/Mitsibushi send command that takes all the desired settings as arguments.
+// Following that is the zibgee 3.0 Espressif Arduino code to create the end points and their controls (clusters) that select
+// the various parameters or the heat pump. This code is just from the HVAC IR Control project:
+//       
+//     PARTA     https://github.com/r45635/HVAC-IR-Control ,           (c)  Vincent Cruvellier
+//     PARTB     https://github.com/peterashwoodsmith/HeatPumpHA       (c)  Peter Ashwood-Smith Dec 2025 
+//
+//
 
+// PART A
+//
+// These are the Infra red parameters used to determine intervals and which I/O pin to use to drive the IR board.
+// 
+int ir_halfPeriodicTime;
+int ir_pin;
+int ir_khz;
 
-// M I T S U B I S H I  IR stuff follows
-
-int halfPeriodicTime;
-int IRpin;
-int khz;
-
+// 
+//  IR code used in the Mitsubish IR protocol.
+//
+#define HVAC_MITSUBISHI_HDR_MARK    3400
+#define HVAC_MITSUBISHI_HDR_SPACE   1750
+#define HVAC_MITSUBISHI_BIT_MARK    450
+#define HVAC_MITSUBISHI_ONE_SPACE   1300
+#define HVAC_MISTUBISHI_ZERO_SPACE  420
+#define HVAC_MITSUBISHI_RPT_MARK    440
+#define HVAC_MITSUBISHI_RPT_SPACE   17100 
+                                         
+//
+// This is the mode of the HVAC. Currently we only support HOT or COLD.
+//
 typedef enum HvacMode {
   HVAC_HOT,
   HVAC_COLD,
   HVAC_DRY,
-  HVAC_FAN, // used for Panasonic only
+  HVAC_FAN, 
   HVAC_AUTO
-} HvacMode_t; // HVAC  MODE
+} HvacMode_t; 
 
+//
+// This is the mode of the HVAC fan, it has speeds 1-5 an auto and a 
+// silent mode. For the moment we just map this to a zibgee analog 0-6
+// slider.
+//
 typedef enum HvacFanMode {
   FAN_SPEED_1,
   FAN_SPEED_2,
@@ -27,9 +55,14 @@ typedef enum HvacFanMode {
   FAN_SPEED_5,
   FAN_SPEED_AUTO,
   FAN_SPEED_SILENT
-} HvacFanMode_t;  // HVAC  FAN MODE
+} HvacFanMode_t;
 
-typedef enum HvacVanneMode {
+//
+// This is the mode of the HVAC vanes, it has 5 positions and two auto modes.
+// For the moment we just map this to a zibgee analog 0-6
+// slider.
+//
+typedef enum HvacVaneMode {
   VANNE_AUTO,
   VANNE_H1,
   VANNE_H2,
@@ -37,54 +70,25 @@ typedef enum HvacVanneMode {
   VANNE_H4,
   VANNE_H5,
   VANNE_AUTO_MOVE
-} HvacVanneMode_t;  // HVAC  VANNE MODE
+} HvacVaneMode_t; 
 
-typedef enum HvacWideVanneMode {
-  WIDE_LEFT_END,
-  WIDE_LEFT,
-  WIDE_MIDDLE,
-  WIDE_RIGHT,
-  WIDE_RIGHT_END
-} HvacWideVanneMode_t;  // HVAC  WIDE VANNE MODE
-
-typedef enum HvacAreaMode {
-  AREA_SWING,
-  AREA_LEFT,
-  AREA_AUTO,
-  AREA_RIGHT
-} HvacAreaMode_t;  // HVAC  WIDE VANNE MODE
-
-typedef enum HvacProfileMode {
-  NORMAL,
-  QUIET,
-  BOOST
-} HvacProfileMode_t;  // HVAC PANASONIC OPTION MODE
-
-// HVAC MITSUBISHI_
-#define HVAC_MITSUBISHI_HDR_MARK    3400
-#define HVAC_MITSUBISHI_HDR_SPACE   1750
-#define HVAC_MITSUBISHI_BIT_MARK    450
-#define HVAC_MITSUBISHI_ONE_SPACE   1300
-#define HVAC_MISTUBISHI_ZERO_SPACE  420
-#define HVAC_MITSUBISHI_RPT_MARK    440
-#define HVAC_MITSUBISHI_RPT_SPACE   17100 // Above original iremote limit
-
-/****************************************************************************
-/* Send IR command to Mitsubishi HVAC - sendHvacMitsubishi
-/***************************************************************************/
-void sendHvacMitsubishi(
+//
+// Send IR command to Mitsubishi HVAC - ir_sendHvacMitsubishi, this will generate a single 18 byte packet containing the desired
+// mode, temperature, fan behaior, vane behavior and on/off setting.
+//
+void ir_sendHvacMitsubishi(
   HvacMode                HVAC_Mode,           // Example HVAC_HOT  HvacMitsubishiMode
   int                     HVAC_Temp,           // Example 21  (°c)
   HvacFanMode             HVAC_FanMode,        // Example FAN_SPEED_AUTO  HvacMitsubishiFanMode
-  HvacVanneMode           HVAC_VanneMode,      // Example VANNE_AUTO_MOVE  HvacMitsubishiVanneMode
-  int                     OFF                  // Example false
+  HvacVaneMode            HVAC_VaneMode,       // Example VANNE_AUTO_MOVE  HvacMitsubishiVaneMode
+  int                     HVAC_powerOff        // Example false
 )
 {
   byte mask = 1; //our bitmask
   byte data[18] = { 0x23, 0xCB, 0x26, 0x01, 0x00, 0x20, 0x08, 0x06, 0x30, 0x45, 0x67, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x1F };
   // data array is a valid trame, only byte to be chnaged will be updated.
   byte i;
-
+  //
 #ifdef HVAC_MITSUBISHI_DEBUG
   Serial.println("Packet to send: ");
   for (i = 0; i < 18; i++) {
@@ -93,14 +97,14 @@ void sendHvacMitsubishi(
   }
   Serial.println(".");
 #endif
-
+  //
   // Byte 6 - On / Off
-  if (OFF) {
+  if (HVAC_powerOff) {
     data[5] = (byte) 0x0; // Turn OFF HVAC
   } else {
     data[5] = (byte) 0x20; // Tuen ON HVAC
   }
-
+  //
   // Byte 7 - Mode
   switch (HVAC_Mode)
   {
@@ -110,7 +114,7 @@ void sendHvacMitsubishi(
     case HVAC_AUTO:  data[6] = (byte) 0x20; break;
     default: break;
   }
-
+  //
   // Byte 8 - Temperature
   // Check Min Max For Hot Mode
   byte Temp;
@@ -118,7 +122,7 @@ void sendHvacMitsubishi(
   else if (HVAC_Temp < 16) { Temp = 16; } 
   else { Temp = HVAC_Temp; };
   data[7] = (byte) Temp - 16;
-
+  //
   // Byte 10 - FAN / VANNE
   switch (HVAC_FanMode)
   {
@@ -131,8 +135,8 @@ void sendHvacMitsubishi(
     case FAN_SPEED_SILENT:  data[9] = (byte) B00000101; break;
     default: break;
   }
-
-  switch (HVAC_VanneMode)
+  //
+  switch (HVAC_VaneMode)
   {
     case VANNE_AUTO:        data[9] = (byte) data[9] | B01000000; break;
     case VANNE_H1:          data[9] = (byte) data[9] | B01001000; break;
@@ -143,13 +147,13 @@ void sendHvacMitsubishi(
     case VANNE_AUTO_MOVE:   data[9] = (byte) data[9] | B01111000; break;
     default: break;
   }
-
+  //
   // Byte 18 - CRC
   data[17] = 0;
   for (i = 0; i < 17; i++) {
     data[17] = (byte) data[i] + data[17];  // CRC is a simple bits addition
   }
-
+  //
 #ifdef HVAC_MITSUBISHI_DEBUG
   Serial.println("Packet to send: ");
   for (i = 0; i < 18; i++) {
@@ -161,70 +165,76 @@ void sendHvacMitsubishi(
   }
   Serial.println(".");
 #endif
-
-  space(0);
+  //
+  ir_space(0);
   for (int j = 0; j < 2; j++) {  // For Mitsubishi IR protocol we have to send two time the packet data
     // Header for the Packet
-    mark(HVAC_MITSUBISHI_HDR_MARK);
-    space(HVAC_MITSUBISHI_HDR_SPACE);
+    ir_mark(HVAC_MITSUBISHI_HDR_MARK);
+    ir_space(HVAC_MITSUBISHI_HDR_SPACE);
     for (i = 0; i < 18; i++) {
       // Send all Bits from Byte Data in Reverse Order
       for (mask = 00000001; mask > 0; mask <<= 1) { //iterate through bit mask
         if (data[i] & mask) { // Bit ONE
-          mark(HVAC_MITSUBISHI_BIT_MARK);
-          space(HVAC_MITSUBISHI_ONE_SPACE);
+          ir_mark(HVAC_MITSUBISHI_BIT_MARK);
+          ir_space(HVAC_MITSUBISHI_ONE_SPACE);
         }
         else { // Bit ZERO
-          mark(HVAC_MITSUBISHI_BIT_MARK);
-          space(HVAC_MISTUBISHI_ZERO_SPACE);
+          ir_mark(HVAC_MITSUBISHI_BIT_MARK);
+          ir_space(HVAC_MISTUBISHI_ZERO_SPACE);
         }
         //Next bits
       }
     }
     // End of Packet and retransmission of the Packet
-    mark(HVAC_MITSUBISHI_RPT_MARK);
-    space(HVAC_MITSUBISHI_RPT_SPACE);
-    space(0); // Just to be sure
+    ir_mark(HVAC_MITSUBISHI_RPT_MARK);
+    ir_space(HVAC_MITSUBISHI_RPT_SPACE);
+    ir_space(0); // Just to be sure
   }
 }
 
-/****************************************************************************
-/* mark ( int time) 
-/***************************************************************************/ 
-void mark(int time) {
-  // Sends an IR mark for the specified number of microseconds.
-  // The mark output is modulated at the PWM frequency.
+//
+// send an ir_mark ( int time ) 
+// 
+// Sends an IR ir_mark for the specified number of microseconds.
+// The ir_mark output is modulated at the PWM frequency.
+//
+void ir_mark(int time) {
   long beginning = micros();
   while(micros() - beginning < time){
-    digitalWrite(IRpin, HIGH);
-    delayMicroseconds(halfPeriodicTime);
-    digitalWrite(IRpin, LOW);
-    delayMicroseconds(halfPeriodicTime); //38 kHz -> T = 26.31 microsec (periodic time), half of it is 13
+    digitalWrite(ir_pin, HIGH);
+    delayMicroseconds(ir_halfPeriodicTime);
+    digitalWrite(ir_pin, LOW);
+    delayMicroseconds(ir_halfPeriodicTime); //38 kHz -> T = 26.31 microsec (periodic time), half of it is 13
   }
 }
 
-/****************************************************************************
-/* space ( int time) 
-/***************************************************************************/ 
-/* Leave pin off for time (given in microseconds) */
-void space(int time) {
-  // Sends an IR space for the specified number of microseconds.
-  // A space is no output, so the PWM output is disabled.
-  digitalWrite(IRpin, LOW);
+//
+// ir_space ( int time) 
+// Leave pin off for time (given in microseconds) 
+// Sends an IR ir_space for the specified number of microseconds.
+// A ir_space is no output, so the PWM output is disabled.
+//
+void ir_space(int time) {
+  digitalWrite(ir_pin, LOW);
   if (time > 0) delayMicroseconds(time);
 }
 
-void setupIR() {
+//
+// Setup the variables and pins for use the the code above to send to the IR board.
+// Only thing you may need to change here is what ir_pin you want to use.
+//
+void ir_setup() {
   // put your setup code here, to run once:
-  IRpin=10;
-  khz=38;
-  halfPeriodicTime = 500/khz;
-  pinMode(IRpin, OUTPUT);
-  Serial.println("setupIR done");
+  ir_pin=10;
+  ir_khz=38;
+  ir_halfPeriodicTime = 500/ir_khz;
+  pinMode(ir_pin, OUTPUT);
+  Serial.println("ir_setup done");
 }
 
-// Z I G B E E STUFF FOLLOWS
-
+//
+// PART B - Z I G B E E / Home Assistant interface
+//
 #ifndef ZIGBEE_MODE_ED
 #error "Zigbee end device mode is not selected in Tools->Zigbee mode"
 #endif
@@ -232,29 +242,29 @@ void setupIR() {
 #include "Zigbee.h"
 
 // 
-// These are the EP control entities.
+// These are the EP control entities each has one cluser which is a 'knob' that controls an HVAC parameter
 //
-ZigbeePowerOutlet zbOutlet      = ZigbeePowerOutlet(10);    // Power on/off
-ZigbeeBinary      zbColdHot     = ZigbeeBinary(11);         // Heat or cooling
-ZigbeeAnalog      zbTemp        = ZigbeeAnalog(12);         // Desired temperature
-ZigbeeAnalog      zbFanControl  = ZigbeeAnalog(13);         // How the fans operate
-ZigbeeAnalog      zbVaneControl = ZigbeeAnalog(14);         // Van motion/positions
+ZigbeePowerOutlet zbOutlet      = ZigbeePowerOutlet(10);    // Power on/off knob
+ZigbeeBinary      zbColdHot     = ZigbeeBinary(11);         // Heat or cooling knob
+ZigbeeAnalog      zbTemp        = ZigbeeAnalog(12);         // Desired temperature slider
+ZigbeeAnalog      zbFanControl  = ZigbeeAnalog(13);         // How the fans operate slider
+ZigbeeAnalog      zbVaneControl = ZigbeeAnalog(14);         // Van motion/positions slider
 
 //
-// These are the variables that maintain the state of what HA as asked to be
+// These are the variables that maintain the state of what HA has asked to be set
 // set.
 //
-int               ha_fanStatus     = 0;
-bool              ha_powerStatus   = 0;
-bool              ha_coldHotStatus = 0;
-int               ha_tempStatus    = 0;
-int               ha_vaneStatus    = 0;
+bool              ha_powerStatus   = 0;    // powered on/off
+bool              ha_coldHotStatus = 0;    // heating or cooling mode
+int               ha_fanStatus     = 0;    // fan position or movement
+int               ha_tempStatus    = 0;    // desired temperature
+int               ha_vaneStatus    = 0;    // how the vanes move or don't
 
 //
 // Send the Heat Pump the proper commands to synchronize with what HA as asked. Basically convert from the above ha_ variables
-// to corresponding hv_ variables and call the send function.
+// to corresponding hv_ variables and call the send function which will encode the 18 byte frame to the IR transmitter.
 //
-void syncHeadPump()
+void HA_syncHeadPump()
 {
     HvacMode hv_mode;
     switch(ha_coldHotStatus) {
@@ -265,71 +275,81 @@ void syncHeadPump()
                  return;
     }
     //
-    int           hv_powerOff  = ha_powerStatus ? 1 : 0;
-    int           hv_temp      = ha_tempStatus;
-    HvacFanMode   hv_fanMode   = (HvacFanMode) ha_fanStatus;
-    HvacVanneMode hv_vanneMode = (HvacVanneMode) ha_vaneStatus;
+    int          hv_powerOff  = ha_powerStatus ? 1 : 0;
+    int          hv_temp      = ha_tempStatus;
+    HvacFanMode  hv_fanMode   = (HvacFanMode) ha_fanStatus;
+    HvacVaneMode hv_vanneMode = (HvacVaneMode) ha_vaneStatus;
     //
      Serial.printf("*** SEND HVAC COMMAND: mode=%d, temp=%d, fan=%d, vane=%d, off=%d ***\n",
                    hv_mode, hv_temp, hv_fanMode, hv_vanneMode, hv_powerOff);
-     sendHvacMitsubishi(hv_mode, hv_temp, hv_fanMode, hv_vanneMode, hv_powerOff);
+    ir_sendHvacMitsubishi(hv_mode, hv_temp, hv_fanMode, hv_vanneMode, hv_powerOff);
 }
 
-void displayPowerStatus()
+//
+// These are just useful debugging functions to display the attributes that HA has given us.
+// One for each attributes.
+//
+void ha_displayPowerStatus()
 {
      Serial.println(ha_powerStatus ? "POWER ON" : "POWER OFF"); 
 }
-
-void displayFanStatus()
+//
+void ha_displayFanStatus()
 {     
      Serial.printf("FAN STATUS = %d\n", ha_fanStatus);
 }
-
-void displayVaneStatus()
+//
+void ha_displayVaneStatus()
 {
      if ((ha_vaneStatus < 0)||(ha_vaneStatus > 6))
         Serial.printf("VANE STATUS = %d ????\n", ha_vaneStatus);
      else
         Serial.printf("VANE STATUS = %d\n", ha_vaneStatus);
 }
-
-void displayColdHotStatus()
+//
+void ha_displayColdHotStatus()
 {    
      Serial.printf("COOL or HEAT STATUS = %s (%x)\n", ha_coldHotStatus ? "HEAT" : "COOL", (unsigned int) ha_coldHotStatus);
 }
-
-void displayTempStatus()
+//
+void ha_displayTempStatus()
 {    
      Serial.printf("TEMP STATUS = %d\n", ha_tempStatus);
 }
 
-void setFan(float value)   
+//
+// These are the callback functions that set each of the attributes. When HA makes a change to the attribute the zibgee library
+// will call these so we can record the desired setting. Note that we do not immediately try to send the IR packet to the HVAC
+// rather we will wait a bit to make sure that if the user changes a few attributes in a few seconds can just send one command and
+// save a little bit of power. One set function per attribute follows.
+//
+void ha_setFan(float value)   
 {
      ha_fanStatus = value;
-     Serial.print("HA=> "); displayFanStatus();
+     Serial.print("HA=> "); ha_displayFanStatus();
 }
-
-void setPower(bool value)
+//
+void ha_setPower(bool value)
 {
      ha_powerStatus = value;
-     Serial.print("HA=> "); displayPowerStatus();
+     Serial.print("HA=> "); ha_displayPowerStatus();
 }
-
-void setColdHot(bool state)
+//
+void ha_setColdHot(bool state)
 {
      ha_coldHotStatus = state;
-     Serial.print("HA=> "); displayColdHotStatus();
+     Serial.print("HA=> "); ha_displayColdHotStatus();
 }
-
-void setTemp(float value)
+//
+void ha_setTemp(float value)
 {    ha_tempStatus = value;
-     Serial.print("HA=> "); displayTempStatus();
+     Serial.print("HA=> "); ha_displayTempStatus();
 }
-
-void setVane(float value)
+//
+void ha_setVane(float value)
 {
      ha_vaneStatus = value;
-     Serial.print("HA=> "); displayVaneStatus();
+     Serial.print("HA=> "); ha_displayVaneStatus();
 }
 
 // BASIC ARDUINO SETUP
@@ -338,20 +358,20 @@ void setup() {
      Serial.begin(115200);
      delay(100);
      //
-     Serial.println("MITS IR setup");
-     setupIR();
+     Serial.println("MITS IR ha_setup");
+     ir_setup();
      //
      Serial.println("RiverView Zigbee");
      Serial.println("On of Power switch cluster");
      zbOutlet.setManufacturerAndModel("RiverView", "ESP32C6Light");
-     zbOutlet.onPowerOutletChange(setPower);
+     zbOutlet.onPowerOutletChange(ha_setPower);
      //
      Serial.println("Cold/Hot Switch cluster");
      zbColdHot.setManufacturerAndModel("RiverView", "ESP32C6Light");
      zbColdHot.addBinaryOutput();
      zbColdHot.setBinaryOutputApplication(BINARY_OUTPUT_APPLICATION_TYPE_HVAC_OTHER);
      zbColdHot.setBinaryOutputDescription("Cool => Heat");
-     zbColdHot.onBinaryOutputChange(setColdHot);
+     zbColdHot.onBinaryOutputChange(ha_setColdHot);
      //
      Serial.println("Temp Selector cluster");
      zbTemp.setManufacturerAndModel("RiverView", "ESP32C6Light");
@@ -360,7 +380,7 @@ void setup() {
      zbTemp.setAnalogOutputDescription("Temperature C");
      zbTemp.setAnalogOutputResolution(1);
      zbTemp.setAnalogOutputMinMax(0, 30); 
-     zbTemp.onAnalogOutputChange(setTemp);
+     zbTemp.onAnalogOutputChange(ha_setTemp);
      //
      Serial.println("Fan Selector cluster");
      zbFanControl.setManufacturerAndModel("RiverView", "ESP32C6Light");
@@ -369,7 +389,7 @@ void setup() {
      zbFanControl.setAnalogOutputDescription("Fan 0-4 (5-auto, 6-silent)");
      zbFanControl.setAnalogOutputResolution(1);
      zbFanControl.setAnalogOutputMinMax(0, 7);  
-     zbFanControl.onAnalogOutputChange(setFan);
+     zbFanControl.onAnalogOutputChange(ha_setFan);
      //
      Serial.println("Vane Selector cluster");
      zbVaneControl.setManufacturerAndModel("RiverView", "ESP32C6Light");
@@ -378,7 +398,7 @@ void setup() {
      zbVaneControl.setAnalogOutputDescription("Vane (0=Auto,1,2,3,4,5,6=move);");
      zbVaneControl.setAnalogOutputResolution(1);
      zbVaneControl.setAnalogOutputMinMax(0, 6);  
-     zbVaneControl.onAnalogOutputChange(setVane);
+     zbVaneControl.onAnalogOutputChange(ha_setVane);
      //
      Serial.println("Set battery power");
      //
@@ -423,10 +443,10 @@ void setup() {
 
 void loop() {
      Serial.printf("----------------------------- loop ------------------------------------\n");
-     displayPowerStatus();
-     displayColdHotStatus();
-     displayTempStatus();
-     displayFanStatus();
-     displayVaneStatus();
+     ha_displayPowerStatus();
+     ha_displayColdHotStatus();
+     ha_displayTempStatus();
+     ha_displayFanStatus();
+     ha_displayVaneStatus();
      delay(10000);
 }
