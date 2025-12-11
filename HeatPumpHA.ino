@@ -235,18 +235,20 @@ void setupIR() {
 // These are the EP control entities.
 //
 ZigbeePowerOutlet zbOutlet      = ZigbeePowerOutlet(10);    // Power on/off
-ZigbeeBinary      zbHotCold     = ZigbeeBinary(11);         // Heat or cooling
+ZigbeeBinary      zbColdHot     = ZigbeeBinary(11);         // Heat or cooling
 ZigbeeAnalog      zbTemp        = ZigbeeAnalog(12);         // Desired temperature
-ZigbeeFanControl  zbFanControl  = ZigbeeFanControl(13);     // How the fans operate
+ZigbeeAnalog      zbFanControl  = ZigbeeAnalog(13);         // How the fans operate
+ZigbeeAnalog      zbVaneControl = ZigbeeAnalog(14);         // Van motion/positions
 
 //
 // These are the variables that maintain the state of what HA as asked to be
 // set.
 //
-ZigbeeFanMode     ha_fanStatus     = FAN_MODE_OFF;
+int               ha_fanStatus     = 0;
 bool              ha_powerStatus   = 0;
-bool              ha_hotColdStatus = 0;
-float             ha_tempStatus    = 0;
+bool              ha_coldHotStatus = 0;
+int               ha_tempStatus    = 0;
+int               ha_vaneStatus    = 0;
 
 //
 // Send the Heat Pump the proper commands to synchronize with what HA as asked. Basically convert from the above ha_ variables
@@ -255,30 +257,22 @@ float             ha_tempStatus    = 0;
 void syncHeadPump()
 {
     HvacMode hv_mode;
-    switch(ha_hotColdStatus) {
-         case 0: hv_mode = HVAC_HOT;  break;
-         case 1: hv_mode = HVAC_COLD; break;
+    switch(ha_coldHotStatus) {
+         case 1: hv_mode = HVAC_HOT;  break;
+         case 0: hv_mode = HVAC_COLD; break;
          default:
-                 Serial.printf("Invalid power status =% d\n", ha_hotColdStatus);
+                 Serial.printf("Invalid power status =% d\n", ha_coldHotStatus);
                  return;
     }
     //
-    int hv_powerOff = ha_powerStatus ? 1 : 0;
-    int hv_temp = ha_tempStatus;
+    int           hv_powerOff  = ha_powerStatus ? 1 : 0;
+    int           hv_temp      = ha_tempStatus;
+    HvacFanMode   hv_fanMode   = (HvacFanMode) ha_fanStatus;
+    HvacVanneMode hv_vanneMode = (HvacVanneMode) ha_vaneStatus;
     //
-    HvacFanMode hv_fanMode;
-    switch (ha_fanStatus) {
-          case FAN_MODE_OFF:    hv_fanMode = FAN_SPEED_SILENT; break;
-          case FAN_MODE_LOW:    hv_fanMode = FAN_SPEED_1;      break; 
-          case FAN_MODE_MEDIUM: hv_fanMode = FAN_SPEED_3;      break; 
-          case FAN_MODE_HIGH:   hv_fanMode = FAN_SPEED_5;      break; 
-          case FAN_MODE_ON:     hv_fanMode = FAN_SPEED_AUTO;   break;
-          default:
-                 Serial.printf("Invalid fan status =% d\n", ha_fanStatus);
-                 return;
-     }
-    //
-    sendHvacMitsubishi(hv_mode, hv_temp, hv_fanMode, VANNE_AUTO_MOVE, hv_powerOff);
+     Serial.printf("*** SEND HVAC COMMAND: mode=%d, temp=%d, fan=%d, vane=%d, off=%d ***\n",
+                   hv_mode, hv_temp, hv_fanMode, hv_vanneMode, hv_powerOff);
+     sendHvacMitsubishi(hv_mode, hv_temp, hv_fanMode, hv_vanneMode, hv_powerOff);
 }
 
 void displayPowerStatus()
@@ -288,31 +282,30 @@ void displayPowerStatus()
 
 void displayFanStatus()
 {     
-     char *s = "UNK";
-     switch (ha_fanStatus) {
-          case FAN_MODE_OFF:    s = "OFF";    break;
-          case FAN_MODE_LOW:    s = "LOW";    break; 
-          case FAN_MODE_MEDIUM: s = "MEDIUM"; break; 
-          case FAN_MODE_HIGH:   s = "HIGH";   break; 
-          case FAN_MODE_ON:     s = "ON";     break;
-     }
-     Serial.printf("FAN STATUS = %s (%x)\n", s, (unsigned int) ha_fanStatus);
+     Serial.printf("FAN STATUS = %d\n", ha_fanStatus);
 }
 
-void displayHotColdStatus()
+void displayVaneStatus()
+{
+     if ((ha_vaneStatus < 0)||(ha_vaneStatus > 6))
+        Serial.printf("VANE STATUS = %d ????\n", ha_vaneStatus);
+     else
+        Serial.printf("VANE STATUS = %d\n", ha_vaneStatus);
+}
+
+void displayColdHotStatus()
 {    
-     Serial.printf("HOT COLD STATUS = %s (%x)\n", ha_hotColdStatus ? "COLD" : "HOT", (unsigned int) ha_hotColdStatus);
+     Serial.printf("COOL or HEAT STATUS = %s (%x)\n", ha_coldHotStatus ? "HEAT" : "COOL", (unsigned int) ha_coldHotStatus);
 }
 
 void displayTempStatus()
 {    
-     Serial.printf("TEMP STATUS = %f\n", ha_tempStatus);
+     Serial.printf("TEMP STATUS = %d\n", ha_tempStatus);
 }
 
-void setFanMode(ZigbeeFanMode mode);   // Compiler seems to need this or gets confused by enum
-void setFanMode(ZigbeeFanMode mode)
+void setFan(float value)   
 {
-     ha_fanStatus = (ZigbeeFanMode) (((unsigned int) mode) & 0xff);  // we get garbage bytes at the top
+     ha_fanStatus = value;
      Serial.print("HA=> "); displayFanStatus();
 }
 
@@ -322,10 +315,10 @@ void setPower(bool value)
      Serial.print("HA=> "); displayPowerStatus();
 }
 
-void setHotCold(bool state)
+void setColdHot(bool state)
 {
-     ha_hotColdStatus = state;
-     Serial.print("HA=> "); displayHotColdStatus();
+     ha_coldHotStatus = state;
+     Serial.print("HA=> "); displayColdHotStatus();
 }
 
 void setTemp(float value)
@@ -333,88 +326,108 @@ void setTemp(float value)
      Serial.print("HA=> "); displayTempStatus();
 }
 
+void setVane(float value)
+{
+     ha_vaneStatus = value;
+     Serial.print("HA=> "); displayVaneStatus();
+}
+
 // BASIC ARDUINO SETUP
 
 void setup() {
-  Serial.begin(115200);
-  delay(100);
-  Serial.println();
-
-  setupIR();
-  Serial.println("MITS IR setup");
-  Serial.println("RiverView Zigbee light");
-  //
-  zbFanControl.setManufacturerAndModel("RiverView", "ESP32C6Light");
-  zbOutlet.setManufacturerAndModel("RiverView", "ESP32C6Light");
-  zbHotCold.setManufacturerAndModel("RiverView", "ESP32C6Light");
-  zbTemp.setManufacturerAndModel("RiverView", "ESP32C6Light");
-
-  Serial.println("1");
-  // Set minimum and maximum temperature measurement value
-  zbFanControl.setFanModeSequence(FAN_MODE_SEQUENCE_LOW_MED_HIGH);
-  zbFanControl.onFanModeChange(setFanMode);
-  zbOutlet.onPowerOutletChange(setPower);
-
-  zbHotCold.addBinaryOutput();
-  zbHotCold.setBinaryOutputApplication(BINARY_OUTPUT_APPLICATION_TYPE_HVAC_OTHER);
-  zbHotCold.setBinaryOutputDescription("Heat Cool Switch");
-  zbHotCold.onBinaryOutputChange(setHotCold);
-  //
-  zbTemp.addAnalogOutput();
-  zbTemp.setAnalogOutputApplication(ESP_ZB_ZCL_AI_TEMPERATURE_OTHER);
-  zbTemp.setAnalogOutputDescription("Temperature C");
-  zbTemp.setAnalogOutputResolution(1);
-  zbTemp.setAnalogOutputMinMax(5, 30);  
-  zbTemp.onAnalogOutputChange(setTemp);
-  //
-  Serial.println("2");
-  
-  Zigbee.addEndpoint(&zbOutlet);
-  Zigbee.addEndpoint(&zbHotCold);
-  Zigbee.addEndpoint(&zbTemp);
-  Zigbee.addEndpoint(&zbFanControl);
-
-  Serial.println("3");
-  delay(1000);
-  // Create a default Zigbee configuration for End Device
-  esp_zb_cfg_t zigbeeConfig = ZIGBEE_DEFAULT_ED_CONFIG();
-  Serial.println("Starting Zigbee");
-  delay(5000);
-  // When all EPs are registered, start Zigbee in End Device mode
-  if (!Zigbee.begin(&zigbeeConfig, true)) {
-    Serial.println("Zigbee failed to start!");
-    Serial.println("Rebooting ESP32!");
-    ESP.restart();  // If Zigbee failed to start, reboot the device and try again
-  }
-  Serial.println("Connecting to network");
-  delay(5000);
-  while (!Zigbee.connected()) {
-    Serial.println("waiting to connect");
-    delay(1000);
-  }
-  Serial.println("Successfully connected to Zigbee network");
-  // Delay approx 1s (may be adjusted) to allow establishing proper connection with coordinator, needed for sleepy devices
-  delay(1000);
-
-  ha_powerStatus   = zbOutlet.getPowerOutletState();     
-  ha_hotColdStatus = zbHotCold.getBinaryOutput();
-  ha_tempStatus    = zbTemp.getAnalogOutput();
-  ha_fanStatus     = zbFanControl.getFanMode();
-  
-  Serial.println("Queried initial state values which follow");
-  displayPowerStatus();
-  displayHotColdStatus();
-  displayTempStatus();
-  displayFanStatus();
-
+     Serial.begin(115200);
+     delay(100);
+     //
+     Serial.println("MITS IR setup");
+     setupIR();
+     //
+     Serial.println("RiverView Zigbee");
+     Serial.println("On of Power switch cluster");
+     zbOutlet.setManufacturerAndModel("RiverView", "ESP32C6Light");
+     zbOutlet.onPowerOutletChange(setPower);
+     //
+     Serial.println("Cold/Hot Switch cluster");
+     zbColdHot.setManufacturerAndModel("RiverView", "ESP32C6Light");
+     zbColdHot.addBinaryOutput();
+     zbColdHot.setBinaryOutputApplication(BINARY_OUTPUT_APPLICATION_TYPE_HVAC_OTHER);
+     zbColdHot.setBinaryOutputDescription("Cool => Heat");
+     zbColdHot.onBinaryOutputChange(setColdHot);
+     //
+     Serial.println("Temp Selector cluster");
+     zbTemp.setManufacturerAndModel("RiverView", "ESP32C6Light");
+     zbTemp.addAnalogOutput();
+     zbTemp.setAnalogOutputApplication(ESP_ZB_ZCL_AI_TEMPERATURE_OTHER);
+     zbTemp.setAnalogOutputDescription("Temperature C");
+     zbTemp.setAnalogOutputResolution(1);
+     zbTemp.setAnalogOutputMinMax(0, 30); 
+     zbTemp.onAnalogOutputChange(setTemp);
+     zbTemp.setAnalogOutput(20);
+     //
+     Serial.println("Fan Selector cluster");
+     zbFanControl.setManufacturerAndModel("RiverView", "ESP32C6Light");
+     zbFanControl.addAnalogOutput();
+     zbFanControl.setAnalogOutputApplication(ESP_ZB_ZCL_AI_TEMPERATURE_OTHER);
+     zbFanControl.setAnalogOutputDescription("Fan 0-4 (5-auto, 6-silent)");
+     zbFanControl.setAnalogOutputResolution(1);
+     zbFanControl.setAnalogOutputMinMax(0, 7);  
+     zbFanControl.onAnalogOutputChange(setFan);
+     //
+     Serial.println("Vane Selector cluster");
+     zbVaneControl.setManufacturerAndModel("RiverView", "ESP32C6Light");
+     zbVaneControl.addAnalogOutput();
+     zbVaneControl.setAnalogOutputApplication(ESP_ZB_ZCL_AI_TEMPERATURE_OTHER);
+     zbVaneControl.setAnalogOutputDescription("Vane (0=Auto,1,2,3,4,5,6=move);");
+     zbVaneControl.setAnalogOutputResolution(1);
+     zbVaneControl.setAnalogOutputMinMax(0, 6);  
+     zbVaneControl.onAnalogOutputChange(setVane);
+     //
+     Serial.println("Set battery power");
+     //
+     zbOutlet.setPowerSource(ZB_POWER_SOURCE_BATTERY, 95, 37);  
+     //
+     Zigbee.addEndpoint(&zbOutlet);
+     Zigbee.addEndpoint(&zbColdHot);
+     Zigbee.addEndpoint(&zbTemp);
+     Zigbee.addEndpoint(&zbFanControl);
+     Zigbee.addEndpoint(&zbVaneControl);
+     //
+     delay(1000);
+     // Create a default Zigbee configuration for End Device
+     esp_zb_cfg_t zigbeeConfig = ZIGBEE_DEFAULT_ED_CONFIG();
+     Serial.println("Starting Zigbee");
+     delay(1000);
+     // When all EPs are registered, start Zigbee in End Device mode
+     if (!Zigbee.begin(&zigbeeConfig, false)) {
+        Serial.println("Zigbee failed to start!");
+        Serial.println("Rebooting ESP32!");
+        ESP.restart();  // If Zigbee failed to start, reboot the device and try again
+     }
+     delay(1000);       // Seems necessary or it connects without connecting
+     //
+     Serial.println("Connecting to network");         
+     while (!Zigbee.connected()) {
+        Serial.println("connectint..\n");
+        delay(1000);
+     }
+     Serial.println("Successfully connected to Zigbee network");
+     // Delay approx 1s (may be adjusted) to allow establishing proper connection with coordinator, needed for sleepy devices
+     delay(1000);
+     //
+     ha_powerStatus   = zbOutlet.getPowerOutletState();     // These don't seem to help
+     ha_coldHotStatus = zbColdHot.getBinaryOutput();
+     ha_tempStatus    = zbTemp.getAnalogOutput();
+     ha_fanStatus     = zbFanControl.getAnalogOutput();
+     ha_vaneStatus    = zbVaneControl.getAnalogOutput();
 }
 
 // NOTHING TO DO IN MAIN LOOP ITS ALL CALLBACK BASED SO JUST PRINT STATUS.
 
 void loop() {
-   displayPowerStatus();
-   displayHotColdStatus();
-   displayTempStatus();
-   displayFanStatus();
-   delay(10000);
+     Serial.printf("----------------------------- loop ------------------------------------\n");
+     displayPowerStatus();
+     displayColdHotStatus();
+     displayTempStatus();
+     displayFanStatus();
+     displayVaneStatus();
+     delay(10000);
 }
