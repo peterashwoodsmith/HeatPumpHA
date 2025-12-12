@@ -275,12 +275,12 @@ void HA_syncHeadPump()
                  return;
     }
     //
-    int          hv_powerOff  = ha_powerStatus ? 1 : 0;
+    int          hv_powerOff  = ha_powerStatus ? 0 : 1;        // its an off flag to the UI so reversed from HA.
     int          hv_temp      = ha_tempStatus;
     HvacFanMode  hv_fanMode   = (HvacFanMode) ha_fanStatus;
     HvacVaneMode hv_vanneMode = (HvacVaneMode) ha_vaneStatus;
     //
-     Serial.printf("*** SEND HVAC COMMAND: mode=%d, temp=%d, fan=%d, vane=%d, off=%d ***\n",
+    Serial.printf("*** SEND HVAC COMMAND: mode=%d, temp=%d, fan=%d, vane=%d, off=%d ***\n",
                    hv_mode, hv_temp, hv_fanMode, hv_vanneMode, hv_powerOff);
     ir_sendHvacMitsubishi(hv_mode, hv_temp, hv_fanMode, hv_vanneMode, hv_powerOff);
 }
@@ -318,6 +318,12 @@ void ha_displayTempStatus()
 }
 
 //
+// This is just a little schedule time for when to do a sync. When we get attribute changes we schedule and update 5s in the future.
+// THis just allows us to aggregate multiple quick arriving atribute changes.
+//
+unsigned long ha_update_t = 0;      // not sure about callback thread if its this or different thread.
+
+//
 // These are the callback functions that set each of the attributes. When HA makes a change to the attribute the zibgee library
 // will call these so we can record the desired setting. Note that we do not immediately try to send the IR packet to the HVAC
 // rather we will wait a bit to make sure that if the user changes a few attributes in a few seconds can just send one command and
@@ -327,29 +333,34 @@ void ha_setFan(float value)
 {
      ha_fanStatus = value;
      Serial.print("HA=> "); ha_displayFanStatus();
+     ha_update_t = millis() + 5000;
 }
 //
 void ha_setPower(bool value)
 {
      ha_powerStatus = value;
      Serial.print("HA=> "); ha_displayPowerStatus();
+     ha_update_t = millis() + 5000;
 }
 //
 void ha_setColdHot(bool state)
 {
      ha_coldHotStatus = state;
      Serial.print("HA=> "); ha_displayColdHotStatus();
+     ha_update_t = millis() + 5000;
 }
 //
 void ha_setTemp(float value)
 {    ha_tempStatus = value;
      Serial.print("HA=> "); ha_displayTempStatus();
+     ha_update_t = millis() + 5000;
 }
 //
 void ha_setVane(float value)
 {
      ha_vaneStatus = value;
      Serial.print("HA=> "); ha_displayVaneStatus();
+     ha_update_t = millis() + 5000;
 }
 
 // BASIC ARDUINO SETUP
@@ -416,12 +427,12 @@ void setup() {
      Serial.println("Starting Zigbee");
      delay(1000);
      // When all EPs are registered, start Zigbee in End Device mode
-     if (!Zigbee.begin(&zigbeeConfig, false)) {
+     if (!Zigbee.begin(&zigbeeConfig, true)) {           // every time start from factory new
         Serial.println("Zigbee failed to start!");
         Serial.println("Rebooting ESP32!");
         ESP.restart();  // If Zigbee failed to start, reboot the device and try again
      }
-     delay(1000);       // Seems necessary or it connects without connecting
+     delay(5000);       // Seems necessary or it connects without connecting
      //
      Serial.println("Connecting to network");         
      while (!Zigbee.connected()) {
@@ -449,4 +460,13 @@ void loop() {
      ha_displayFanStatus();
      ha_displayVaneStatus();
      delay(10000);
+     //
+     // If synch required then send the IR now. Wonder if there is problem with mutual exclusion and
+     // callback functions. Are they in same thread? If not this variable is volatile.
+     //
+     if ((ha_update_t > 0) && (millis() > ha_update_t)) {
+         ha_update_t = 0;
+         Serial.println("Synch with HVAC required\n");
+         HA_syncHeadPump();
+     }
 }
