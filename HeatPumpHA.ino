@@ -10,6 +10,12 @@
 //     PARTA     https://github.com/r45635/HVAC-IR-Control ,           (c)  Vincent Cruvellier
 //     PARTB     https://github.com/peterashwoodsmith/HeatPumpHA       (c)  Peter Ashwood-Smith Dec 2025 
 //
+// Building this code in Arduino IDE requires setting
+//          Tools/USB CDC on boot - enabled (allows serial IO for debugging)
+//          Tools/Core debug level (set as desired useful for debugging zibbee attach etc.)
+//          Tools/Erase all flash before upload
+//          Tools/partition scheme: 4MB with spiffs
+//          Tools/zibgee mode ED (end device)
 //
 
 // PART A
@@ -240,6 +246,7 @@ void ir_setup() {
 #endif
 
 #include "Zigbee.h"
+#include <nvs_flash.h>
 
 // 
 // These are the EP control entities each has one cluser which is a 'knob' that controls an HVAC parameter
@@ -260,29 +267,100 @@ int               ha_fanStatus     = 0;    // fan position or movement
 int               ha_tempStatus    = 0;    // desired temperature
 int               ha_vaneStatus    = 0;    // how the vanes move or don't
 
+// NVS Realted stuff
+const char       *ha_nvs_name = "_HeatPumpHA_NVS";   // Unique name for our partition
+const char       *ha_nvs_vname= "_vars_";            // name for our packeed variables
+nvs_handle_t      ha_nvs_handle;                     // Once open this is read/write to NVS
+
+//
+// We are looking for persistant values of the ha_variables above. So we open the Non Volatile Storage
+// and try to read them, if we find them they are packed into a UINT32 so we unpack them into our
+// global ha_xxx variables and continue. We later will write these when every they change via HA.
+// Format is just one attribute per nibble, more than enough room for all the different values in a 
+// single UINT32.
+//
+void ha_nvs_read()
+{
+     esp_err_t err = nvs_flash_init();
+     if (err == ESP_ERR_NVS_NO_FREE_PAGES || err == ESP_ERR_NVS_NEW_VERSION_FOUND) {
+        // NVS partition was truncated and needs to be erased
+        ESP_ERROR_CHECK(nvs_flash_erase());
+        err = nvs_flash_init();
+     }
+     ESP_ERROR_CHECK(err);
+     err = nvs_open(ha_nvs_name, NVS_READWRITE, &ha_nvs_handle);
+     if (err != ESP_OK) {
+        Serial.printf("Error (%s) opening NVS handle!\n", esp_err_to_name(err));
+        return;
+    }
+    int32_t vars = 0;  
+    err = nvs_get_i32(ha_nvs_handle, ha_nvs_vname, &vars);
+    if (err == ESP_ERR_NVS_NOT_FOUND)
+        Serial.printf("Vars %s not found\n", ha_nvs_vname);
+    else if (err != ESP_OK)
+        Serial.printf("Error (%s) reading!\n", esp_err_to_name(err));
+    else {
+        Serial.printf("Vars %s found = %x\n", ha_nvs_vname, vars);
+        // Trivial encoding format - just one nibble per attribute.
+        ha_powerStatus   =  vars & 0xf; vars >>= 4;
+        ha_coldHotStatus =  vars & 0xf; vars >>= 4;
+        ha_fanStatus     =  vars & 0xf; vars >>= 4; 
+        ha_vaneStatus    =  vars & 0xf; vars >>= 4;
+        ha_tempStatus    =  vars & 0x1f;                     // Need 5 bits for temp
+        Serial.printf("Unpacked vars: pow=%d hot/cld=%d fan=%d temp=%d vane=%d\n",
+                       ha_powerStatus, ha_coldHotStatus, ha_fanStatus, ha_tempStatus, ha_vaneStatus);
+    }
+}
+
+//
+// And here is the write to NVS of the attributes after they have been changed and sent to the Heat Pump
+//
+void ha_nvs_write()
+{
+     int32_t vars  = ha_tempStatus    & 0x1f; vars <<= 5;   // Need 5 bites for temp
+             vars |= ha_vaneStatus    & 0xf;  vars <<= 4;
+             vars |= ha_fanStatus     & 0xf;  vars <<= 4;
+             vars |= ha_coldHotStatus & 0xf;  vars <<= 4;
+             vars |= ha_powerStatus   & 0xf; 
+     //
+     Serial.printf("Unpacked vars: pow=%d hot/cld=%d fan=%d temp=%d vane=%d\n",
+                       ha_powerStatus, ha_coldHotStatus, ha_fanStatus, ha_tempStatus, ha_vaneStatus);   
+     Serial.printf("Packed = %x\n", vars);
+     //
+     esp_err_t err = nvs_set_i32(ha_nvs_handle, ha_nvs_vname, vars);
+     if (err != ESP_OK) {
+         Serial.printf("Vars %s can't write, because %s\n", ha_nvs_vname, esp_err_to_name(err));
+         return;
+     }
+     err = nvs_commit(ha_nvs_handle);
+     if (err != ESP_OK) {
+         Serial.printf("Vars %s can't commit, because %s\n", ha_nvs_vname, esp_err_to_name(err));
+     }  
+}
+
 //
 // Send the Heat Pump the proper commands to synchronize with what HA as asked. Basically convert from the above ha_ variables
 // to corresponding hv_ variables and call the send function which will encode the 18 byte frame to the IR transmitter.
 //
-void HA_syncHeadPump()
+void ha_syncHeadPump()
 {
-    HvacMode hv_mode;
-    switch(ha_coldHotStatus) {
+     HvacMode hv_mode;
+     switch(ha_coldHotStatus) {
          case 1: hv_mode = HVAC_HOT;  break;
          case 0: hv_mode = HVAC_COLD; break;
          default:
                  Serial.printf("Invalid power status =% d\n", ha_coldHotStatus);
                  return;
-    }
-    //
-    int          hv_powerOff  = ha_powerStatus ? 0 : 1;        // its an off flag to the UI so reversed from HA.
-    int          hv_temp      = ha_tempStatus;
-    HvacFanMode  hv_fanMode   = (HvacFanMode) ha_fanStatus;
-    HvacVaneMode hv_vanneMode = (HvacVaneMode) ha_vaneStatus;
-    //
-    Serial.printf("*** SEND HVAC COMMAND: mode=%d, temp=%d, fan=%d, vane=%d, off=%d ***\n",
+     }
+     //
+     int          hv_powerOff  = ha_powerStatus ? 0 : 1;        // its an off flag to the UI so reversed from HA.
+     int          hv_temp      = ha_tempStatus;
+     HvacFanMode  hv_fanMode   = (HvacFanMode) ha_fanStatus;
+     HvacVaneMode hv_vanneMode = (HvacVaneMode) ha_vaneStatus;
+     //
+     Serial.printf("*** SEND HVAC COMMAND: mode=%d, temp=%d, fan=%d, vane=%d, off=%d ***\n",
                    hv_mode, hv_temp, hv_fanMode, hv_vanneMode, hv_powerOff);
-    ir_sendHvacMitsubishi(hv_mode, hv_temp, hv_fanMode, hv_vanneMode, hv_powerOff);
+     ir_sendHvacMitsubishi(hv_mode, hv_temp, hv_fanMode, hv_vanneMode, hv_powerOff);
 }
 
 //
@@ -371,6 +449,7 @@ void setup() {
      //
      Serial.println("MITS IR ha_setup");
      ir_setup();
+     ha_nvs_read();      
      //
      Serial.println("RiverView Zigbee");
      Serial.println("On of Power switch cluster");
@@ -442,12 +521,6 @@ void setup() {
      Serial.println("Successfully connected to Zigbee network");
      // Delay approx 1s (may be adjusted) to allow establishing proper connection with coordinator, needed for sleepy devices
      delay(1000);
-     //
-     ha_powerStatus   = zbOutlet.getPowerOutletState();     // These don't seem to help
-     ha_coldHotStatus = zbColdHot.getBinaryOutput();
-     ha_tempStatus    = zbTemp.getAnalogOutput();
-     ha_fanStatus     = zbFanControl.getAnalogOutput();
-     ha_vaneStatus    = zbVaneControl.getAnalogOutput();
 }
 
 // NOTHING TO DO IN MAIN LOOP ITS ALL CALLBACK BASED SO JUST PRINT STATUS.
@@ -467,6 +540,7 @@ void loop() {
      if ((ha_update_t > 0) && (millis() > ha_update_t)) {
          ha_update_t = 0;
          Serial.println("Synch with HVAC required\n");
-         HA_syncHeadPump();
+         ha_syncHeadPump();
+         ha_nvs_write(); 
      }
 }
