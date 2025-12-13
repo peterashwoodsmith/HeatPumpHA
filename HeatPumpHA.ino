@@ -300,8 +300,7 @@ nvs_handle_t      ha_nvs_handle;                     // Once open this is read/w
 // We are looking for persistant values of the ha_variables above. So we open the Non Volatile Storage
 // and try to read them, if we find them they are packed into a UINT32 so we unpack them into our
 // global ha_xxx variables and continue. We later will write these when every they change via HA.
-// Format is just one attribute per nibble, more than enough room for all the different values in a 
-// single UINT32.
+// Format is just one attribute per nibble, excempt temp which gets a full byte.
 //
 void ha_nvs_read()
 {
@@ -330,7 +329,7 @@ void ha_nvs_read()
         ha_coldHotStatus =  vars & 0xf; vars >>= 4;
         ha_fanStatus     =  vars & 0xf; vars >>= 4; 
         ha_vaneStatus    =  vars & 0xf; vars >>= 4;
-        ha_tempStatus    =  vars & 0x1f;                     // Need 5 bits for temp
+        ha_tempStatus    =  vars & 0xff;                     // full byte for temp
         Serial.printf("Unpacked vars: pow=%d hot/cld=%d fan=%d temp=%d vane=%d\n",
                        ha_powerStatus, ha_coldHotStatus, ha_fanStatus, ha_tempStatus, ha_vaneStatus);
     }
@@ -341,7 +340,7 @@ void ha_nvs_read()
 //
 void ha_nvs_write()
 {
-     uint32_t vars  = ha_tempStatus    & 0x1f; vars <<= 5;   // Need 5 bites for temp
+     uint32_t vars  = ha_tempStatus    & 0xff; vars <<= 4;   // full byte for temp
               vars |= ha_vaneStatus    & 0xf;  vars <<= 4;
               vars |= ha_fanStatus     & 0xf;  vars <<= 4;
               vars |= ha_coldHotStatus & 0xf;  vars <<= 4;
