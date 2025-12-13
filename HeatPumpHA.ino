@@ -17,6 +17,49 @@
 //          Tools/partition scheme: 4MB with spiffs
 //          Tools/zibgee mode ED (end device)
 //
+#include <esp_task_wdt.h>
+#include <nvs_flash.h>
+
+//
+// Interrupt service routines for the reset button, must be 5 seconds between the
+// depress event and the release event.
+//
+unsigned isr_resetdepress_t = 0;
+
+//
+// Reset button just pressed so record seconds since reboot.
+//
+void isr_resetButtonPress()
+{
+     isr_resetdepress_t = (millis() / 1000);
+}
+
+//
+// Reset button just released so look to see if we have at least 5 seconds elapsed between
+// the two. If we do, then we clear the non volatile storage and reboot, otherwise just
+// reboot.
+//
+void isr_resetButtonRelease()
+{
+     if (isr_resetdepress_t > 0) {
+         if ((millis() / 1000) - isr_resetdepress_t > (60 * 5)) {
+             nvs_flash_erase();
+         }
+     }
+     ESP.restart();
+}
+
+//
+// Setup the Interrupt service routing for the reset button. We have a falling and rising to detect press/release
+// of this buton.
+void isr_setup()
+{    
+     isr_resetdepress_t = 0;
+     const unsigned int resetButton = 11;
+     pinMode(resetButton, INPUT_PULLUP);
+     attachInterrupt(digitalPinToInterrupt(resetButton), isr_resetButtonPress,   FALLING); // Pullup is grounded it falls
+     attachInterrupt(digitalPinToInterrupt(resetButton), isr_resetButtonRelease, RISING);  // Ground released it rises.
+}
 
 // PART A
 //
@@ -36,57 +79,38 @@ int ir_khz;
 #define HVAC_MISTUBISHI_ZERO_SPACE  420
 #define HVAC_MITSUBISHI_RPT_MARK    440
 #define HVAC_MITSUBISHI_RPT_SPACE   17100 
-                                         
+//                                      
+#define HVAC_MODE_HOT               0             // Enums doing wierd things with compiler, eliminate
+#define HVAC_MODE_COLD              1
+#define HVAC_MODE_DRY               2
+#define HVAC_MODE_FAN               3
+#define HVAC_MODE_AUTO              4
 //
-// This is the mode of the HVAC. Currently we only support HOT or COLD.
+#define HVAC_FANMODE_SPEED_1        0
+#define HVAC_FANMODE_SPEED_2        1
+#define HVAC_FANMODE_SPEED_3        2
+#define HVAC_FANMODE_SPEED_4        3
+#define HVAC_FANMODE_SPEED_5        4
+#define HVAC_FANMODE_SPEED_AUTO     5
+#define HVAC_FANMODE_SPEED_SILENT   6
 //
-typedef enum HvacMode {
-  HVAC_HOT,
-  HVAC_COLD,
-  HVAC_DRY,
-  HVAC_FAN, 
-  HVAC_AUTO
-} HvacMode_t; 
-
-//
-// This is the mode of the HVAC fan, it has speeds 1-5 an auto and a 
-// silent mode. For the moment we just map this to a zibgee analog 0-6
-// slider.
-//
-typedef enum HvacFanMode {
-  FAN_SPEED_1,
-  FAN_SPEED_2,
-  FAN_SPEED_3,
-  FAN_SPEED_4,
-  FAN_SPEED_5,
-  FAN_SPEED_AUTO,
-  FAN_SPEED_SILENT
-} HvacFanMode_t;
-
-//
-// This is the mode of the HVAC vanes, it has 5 positions and two auto modes.
-// For the moment we just map this to a zibgee analog 0-6
-// slider.
-//
-typedef enum HvacVaneMode {
-  VANNE_AUTO,
-  VANNE_H1,
-  VANNE_H2,
-  VANNE_H3,
-  VANNE_H4,
-  VANNE_H5,
-  VANNE_AUTO_MOVE
-} HvacVaneMode_t; 
+#define HVAC_VANEMODE_AUTO          0
+#define HVAC_VANEMODE_H1            1
+#define HVAC_VANEMODE_H2            2
+#define HVAC_VANEMODE_H3            3
+#define HVAC_VANEMODE_H4            4
+#define HVAC_VANEMODE_H5            5
+#define HVAC_VANEMODE_AUTO_MOVE     6
 
 //
 // Send IR command to Mitsubishi HVAC - ir_sendHvacMitsubishi, this will generate a single 18 byte packet containing the desired
 // mode, temperature, fan behaior, vane behavior and on/off setting.
 //
 void ir_sendHvacMitsubishi(
-  HvacMode                HVAC_Mode,           // Example HVAC_HOT  HvacMitsubishiMode
+  int                     HVAC_Mode,           // Example HVAC_HOT  HvacMitsubishiMode
   int                     HVAC_Temp,           // Example 21  (°c)
-  HvacFanMode             HVAC_FanMode,        // Example FAN_SPEED_AUTO  HvacMitsubishiFanMode
-  HvacVaneMode            HVAC_VaneMode,       // Example VANNE_AUTO_MOVE  HvacMitsubishiVaneMode
+  int                     HVAC_FanMode,        // Example FAN_SPEED_AUTO  HvacMitsubishiFanMode
+  int                     HVAC_VaneMode,       // Example VANNE_AUTO_MOVE  HvacMitsubishiVaneMode
   int                     HVAC_powerOff        // Example false
 )
 {
@@ -114,10 +138,10 @@ void ir_sendHvacMitsubishi(
   // Byte 7 - Mode
   switch (HVAC_Mode)
   {
-    case HVAC_HOT:   data[6] = (byte) 0x08; break;
-    case HVAC_COLD:  data[6] = (byte) 0x18; break;
-    case HVAC_DRY:   data[6] = (byte) 0x10; break;
-    case HVAC_AUTO:  data[6] = (byte) 0x20; break;
+    case HVAC_MODE_HOT:   data[6] = (byte) 0x08; break;
+    case HVAC_MODE_COLD:  data[6] = (byte) 0x18; break;
+    case HVAC_MODE_DRY:   data[6] = (byte) 0x10; break;
+    case HVAC_MODE_AUTO:  data[6] = (byte) 0x20; break;
     default: break;
   }
   //
@@ -132,25 +156,25 @@ void ir_sendHvacMitsubishi(
   // Byte 10 - FAN / VANNE
   switch (HVAC_FanMode)
   {
-    case FAN_SPEED_1:       data[9] = (byte) B00000001; break;
-    case FAN_SPEED_2:       data[9] = (byte) B00000010; break;
-    case FAN_SPEED_3:       data[9] = (byte) B00000011; break;
-    case FAN_SPEED_4:       data[9] = (byte) B00000100; break;
-    case FAN_SPEED_5:       data[9] = (byte) B00000100; break; //No FAN speed 5 for MITSUBISHI so it is consider as Speed 4
-    case FAN_SPEED_AUTO:    data[9] = (byte) B10000000; break;
-    case FAN_SPEED_SILENT:  data[9] = (byte) B00000101; break;
+    case HVAC_FANMODE_SPEED_1:       data[9] = (byte) B00000001; break;
+    case HVAC_FANMODE_SPEED_2:       data[9] = (byte) B00000010; break;
+    case HVAC_FANMODE_SPEED_3:       data[9] = (byte) B00000011; break;
+    case HVAC_FANMODE_SPEED_4:       data[9] = (byte) B00000100; break;
+    case HVAC_FANMODE_SPEED_5:       data[9] = (byte) B00000100; break; //No FAN speed 5 for MITSUBISHI so it is consider as Speed 4
+    case HVAC_FANMODE_SPEED_AUTO:    data[9] = (byte) B10000000; break;
+    case HVAC_FANMODE_SPEED_SILENT:  data[9] = (byte) B00000101; break;
     default: break;
   }
   //
   switch (HVAC_VaneMode)
   {
-    case VANNE_AUTO:        data[9] = (byte) data[9] | B01000000; break;
-    case VANNE_H1:          data[9] = (byte) data[9] | B01001000; break;
-    case VANNE_H2:          data[9] = (byte) data[9] | B01010000; break;
-    case VANNE_H3:          data[9] = (byte) data[9] | B01011000; break;
-    case VANNE_H4:          data[9] = (byte) data[9] | B01100000; break;
-    case VANNE_H5:          data[9] = (byte) data[9] | B01101000; break;
-    case VANNE_AUTO_MOVE:   data[9] = (byte) data[9] | B01111000; break;
+    case HVAC_VANEMODE_AUTO:        data[9] = (byte) data[9] | B01000000; break;
+    case HVAC_VANEMODE_H1:          data[9] = (byte) data[9] | B01001000; break;
+    case HVAC_VANEMODE_H2:          data[9] = (byte) data[9] | B01010000; break;
+    case HVAC_VANEMODE_H3:          data[9] = (byte) data[9] | B01011000; break;
+    case HVAC_VANEMODE_H4:          data[9] = (byte) data[9] | B01100000; break;
+    case HVAC_VANEMODE_H5:          data[9] = (byte) data[9] | B01101000; break;
+    case HVAC_VANEMODE_AUTO_MOVE:   data[9] = (byte) data[9] | B01111000; break;
     default: break;
   }
   //
@@ -246,7 +270,7 @@ void ir_setup() {
 #endif
 
 #include "Zigbee.h"
-#include <nvs_flash.h>
+
 
 // 
 // These are the EP control entities each has one cluser which is a 'knob' that controls an HVAC parameter
@@ -317,11 +341,11 @@ void ha_nvs_read()
 //
 void ha_nvs_write()
 {
-     uint32_t vars  = ha_tempStatus   & 0x1f; vars <<= 5;   // Need 5 bites for temp
-             vars |= ha_vaneStatus    & 0xf;  vars <<= 4;
-             vars |= ha_fanStatus     & 0xf;  vars <<= 4;
-             vars |= ha_coldHotStatus & 0xf;  vars <<= 4;
-             vars |= ha_powerStatus   & 0xf; 
+     uint32_t vars  = ha_tempStatus    & 0x1f; vars <<= 5;   // Need 5 bites for temp
+              vars |= ha_vaneStatus    & 0xf;  vars <<= 4;
+              vars |= ha_fanStatus     & 0xf;  vars <<= 4;
+              vars |= ha_coldHotStatus & 0xf;  vars <<= 4;
+              vars |= ha_powerStatus   & 0xf; 
      //
      Serial.printf("Unpacked vars: pow=%d hot/cld=%d fan=%d temp=%d vane=%d\n",
                        ha_powerStatus, ha_coldHotStatus, ha_fanStatus, ha_tempStatus, ha_vaneStatus);   
@@ -344,19 +368,19 @@ void ha_nvs_write()
 //
 void ha_syncHeadPump()
 {
-     HvacMode hv_mode;
+     int hv_mode;
      switch(ha_coldHotStatus) {
-         case 1: hv_mode = HVAC_HOT;  break;
-         case 0: hv_mode = HVAC_COLD; break;
+         case 1: hv_mode = HVAC_MODE_HOT;  break;
+         case 0: hv_mode = HVAC_MODE_COLD; break;
          default:
                  Serial.printf("Invalid power status =% d\n", ha_coldHotStatus);
                  return;
      }
      //
-     int          hv_powerOff  = ha_powerStatus ? 0 : 1;        // its an off flag to the UI so reversed from HA.
-     int          hv_temp      = ha_tempStatus;
-     HvacFanMode  hv_fanMode   = (HvacFanMode) ha_fanStatus;
-     HvacVaneMode hv_vanneMode = (HvacVaneMode) ha_vaneStatus;
+     int hv_powerOff  = ha_powerStatus ? 0 : 1;        // its an off flag to the UI so reversed from HA.
+     int hv_temp      = ha_tempStatus;
+     int hv_fanMode   = ha_fanStatus;
+     int hv_vanneMode = ha_vaneStatus;
      //
      Serial.printf("*** SEND HVAC COMMAND: mode=%d, temp=%d, fan=%d, vane=%d, off=%d ***\n",
                    hv_mode, hv_temp, hv_fanMode, hv_vanneMode, hv_powerOff);
@@ -444,14 +468,30 @@ void ha_setVane(float value)
 // BASIC ARDUINO SETUP
 
 void setup() {
+     // 
+     // If we don't get watch dog resets each 5 minutes then reboot.
+     //
+     //esp_task_wdt_config_t wdt_config = { 1000*60*60*5, (1 << CONFIG_FREERTOS_NUMBER_OF_CORES) - 1, true };
+     //esp_task_wdt_init(&wdt_config);
+     //esp_task_wdt_add(NULL);
+     //
+     // Debug stuff
+     //
      Serial.begin(115200);
      delay(100);
+     Serial.println("RiverView zigbee up");
      //
-     Serial.println("MITS IR ha_setup");
+     // Bring up the IR interface & enable interrupts for reset buttons.
+     //
      ir_setup();
+     isr_setup();
+     //
+     // Read all the Non volatile variables from last boot.
+     //
      ha_nvs_read();      
      //
-     Serial.println("RiverView Zigbee");
+     // Add the zibgee clusters (buttons/sliders etc.)
+     //
      Serial.println("On of Power switch cluster");
      zbOutlet.setManufacturerAndModel("RiverView", "ESP32C6Light");
      zbOutlet.onPowerOutletChange(ha_setPower);
@@ -506,7 +546,7 @@ void setup() {
      Serial.println("Starting Zigbee");
      delay(1000);
      // When all EPs are registered, start Zigbee in End Device mode
-     if (!Zigbee.begin(&zigbeeConfig, false)) {           // every time start from factory new
+     if (!Zigbee.begin(&zigbeeConfig, false)) { 
         Serial.println("Zigbee failed to start!");
         Serial.println("Rebooting ESP32!");
         ESP.restart();  // If Zigbee failed to start, reboot the device and try again
@@ -526,6 +566,8 @@ void setup() {
 // NOTHING TO DO IN MAIN LOOP ITS ALL CALLBACK BASED SO JUST PRINT STATUS.
 
 void loop() {
+     //esp_task_wdt_reset();     // All ok
+     //
      Serial.printf("----------------------------- loop ------------------------------------\n");
      ha_displayPowerStatus();
      ha_displayColdHotStatus();
