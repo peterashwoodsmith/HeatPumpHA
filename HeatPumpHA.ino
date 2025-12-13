@@ -263,9 +263,9 @@ ZigbeeAnalog      zbVaneControl = ZigbeeAnalog(14);         // Van motion/positi
 //
 bool              ha_powerStatus   = 0;    // powered on/off
 bool              ha_coldHotStatus = 0;    // heating or cooling mode
-int               ha_fanStatus     = 0;    // fan position or movement
-int               ha_tempStatus    = 0;    // desired temperature
-int               ha_vaneStatus    = 0;    // how the vanes move or don't
+unsigned int      ha_fanStatus     = 0;    // fan position or movement
+unsigned int      ha_tempStatus    = 0;    // desired temperature
+unsigned int      ha_vaneStatus    = 0;    // how the vanes move or don't
 
 // NVS Realted stuff
 const char       *ha_nvs_name = "_HeatPumpHA_NVS";   // Unique name for our partition
@@ -293,8 +293,8 @@ void ha_nvs_read()
         Serial.printf("Error (%s) opening NVS handle!\n", esp_err_to_name(err));
         return;
     }
-    int32_t vars = 0;  
-    err = nvs_get_i32(ha_nvs_handle, ha_nvs_vname, &vars);
+    uint32_t vars = 0;  
+    err = nvs_get_u32(ha_nvs_handle, ha_nvs_vname, &vars);
     if (err == ESP_ERR_NVS_NOT_FOUND)
         Serial.printf("Vars %s not found\n", ha_nvs_vname);
     else if (err != ESP_OK)
@@ -317,7 +317,7 @@ void ha_nvs_read()
 //
 void ha_nvs_write()
 {
-     int32_t vars  = ha_tempStatus    & 0x1f; vars <<= 5;   // Need 5 bites for temp
+     uint32_t vars  = ha_tempStatus   & 0x1f; vars <<= 5;   // Need 5 bites for temp
              vars |= ha_vaneStatus    & 0xf;  vars <<= 4;
              vars |= ha_fanStatus     & 0xf;  vars <<= 4;
              vars |= ha_coldHotStatus & 0xf;  vars <<= 4;
@@ -327,7 +327,7 @@ void ha_nvs_write()
                        ha_powerStatus, ha_coldHotStatus, ha_fanStatus, ha_tempStatus, ha_vaneStatus);   
      Serial.printf("Packed = %x\n", vars);
      //
-     esp_err_t err = nvs_set_i32(ha_nvs_handle, ha_nvs_vname, vars);
+     esp_err_t err = nvs_set_u32(ha_nvs_handle, ha_nvs_vname, vars);
      if (err != ESP_OK) {
          Serial.printf("Vars %s can't write, because %s\n", ha_nvs_vname, esp_err_to_name(err));
          return;
@@ -506,7 +506,7 @@ void setup() {
      Serial.println("Starting Zigbee");
      delay(1000);
      // When all EPs are registered, start Zigbee in End Device mode
-     if (!Zigbee.begin(&zigbeeConfig, true)) {           // every time start from factory new
+     if (!Zigbee.begin(&zigbeeConfig, false)) {           // every time start from factory new
         Serial.println("Zigbee failed to start!");
         Serial.println("Rebooting ESP32!");
         ESP.restart();  // If Zigbee failed to start, reboot the device and try again
