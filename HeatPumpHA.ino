@@ -19,6 +19,12 @@
 //
 #include <esp_task_wdt.h>
 #include <nvs_flash.h>
+#ifndef ZIGBEE_MODE_ED
+#error "Zigbee end device mode is not selected in Tools->Zigbee mode"
+#endif
+#include "Zigbee.h"
+
+const int debug_g = 1;
 
 //
 // Interrupt service routines for the reset button, must be 5 seconds between the
@@ -46,6 +52,7 @@ void isr_resetButtonRelease()
              nvs_flash_erase();
          }
      }
+     Zigbee.factoryReset(true);
      ESP.restart();
 }
 
@@ -119,14 +126,14 @@ void ir_sendHvacMitsubishi(
   // data array is a valid trame, only byte to be chnaged will be updated.
   byte i;
   //
-#ifdef HVAC_MITSUBISHI_DEBUG
-  Serial.println("Packet to send: ");
-  for (i = 0; i < 18; i++) {
-    Serial.print("_");
-    Serial.print(data[i], HEX);
+  if (debug_g) {
+      Serial.println("Packet to send: ");
+      for (i = 0; i < 18; i++) {
+        Serial.print("_");
+        Serial.print(data[i], HEX);
+      }
+      Serial.println(".");
   }
-  Serial.println(".");
-#endif
   //
   // Byte 6 - On / Off
   if (HVAC_powerOff) {
@@ -184,17 +191,17 @@ void ir_sendHvacMitsubishi(
     data[17] = (byte) data[i] + data[17];  // CRC is a simple bits addition
   }
   //
-#ifdef HVAC_MITSUBISHI_DEBUG
-  Serial.println("Packet to send: ");
-  for (i = 0; i < 18; i++) {
-    Serial.print("_"); Serial.print(data[i], HEX);
-  }
-  Serial.println(".");
-  for (i = 0; i < 18; i++) {
-    Serial.print(data[i], BIN); Serial.print(" ");
-  }
-  Serial.println(".");
-#endif
+  if (debug_g) {
+      Serial.println("Packet to send: ");
+      for (i = 0; i < 18; i++) {
+        Serial.print("_"); Serial.print(data[i], HEX);
+      }
+      Serial.println(".");
+      for (i = 0; i < 18; i++) {
+        Serial.print(data[i], BIN); Serial.print(" ");
+      }
+      Serial.println(".");
+  }  
   //
   ir_space(0);
   for (int j = 0; j < 2; j++) {  // For Mitsubishi IR protocol we have to send two time the packet data
@@ -259,18 +266,12 @@ void ir_setup() {
   ir_khz=38;
   ir_halfPeriodicTime = 500/ir_khz;
   pinMode(ir_pin, OUTPUT);
-  Serial.println("ir_setup done");
+  if (debug_g) Serial.println("ir_setup done");
 }
 
 //
 // PART B - Z I G B E E / Home Assistant interface
 //
-#ifndef ZIGBEE_MODE_ED
-#error "Zigbee end device mode is not selected in Tools->Zigbee mode"
-#endif
-
-#include "Zigbee.h"
-
 
 // 
 // These are the EP control entities each has one cluser which is a 'knob' that controls an HVAC parameter
@@ -313,25 +314,25 @@ void ha_nvs_read()
      ESP_ERROR_CHECK(err);
      err = nvs_open(ha_nvs_name, NVS_READWRITE, &ha_nvs_handle);
      if (err != ESP_OK) {
-        Serial.printf("Error (%s) opening NVS handle!\n", esp_err_to_name(err));
+        if (debug_g) Serial.printf("Error (%s) opening NVS handle!\n", esp_err_to_name(err));
         return;
     }
     uint32_t vars = 0;  
     err = nvs_get_u32(ha_nvs_handle, ha_nvs_vname, &vars);
-    if (err == ESP_ERR_NVS_NOT_FOUND)
-        Serial.printf("Vars %s not found\n", ha_nvs_vname);
-    else if (err != ESP_OK)
-        Serial.printf("Error (%s) reading!\n", esp_err_to_name(err));
-    else {
-        Serial.printf("Vars %s found = %x\n", ha_nvs_vname, vars);
+    if (err == ESP_ERR_NVS_NOT_FOUND) {
+        if (debug_g) Serial.printf("Vars %s not found\n", ha_nvs_vname);
+    } else if (err != ESP_OK) {
+        if (debug_g) Serial.printf("Error (%s) reading!\n", esp_err_to_name(err));
+    } else {
+        if (debug_g) Serial.printf("Vars %s found = %x\n", ha_nvs_vname, vars);
         // Trivial encoding format - just one nibble per attribute.
         ha_powerStatus   =  vars & 0xf; vars >>= 4;
         ha_coldHotStatus =  vars & 0xf; vars >>= 4;
         ha_fanStatus     =  vars & 0xf; vars >>= 4; 
         ha_vaneStatus    =  vars & 0xf; vars >>= 4;
         ha_tempStatus    =  vars & 0xff;                     // full byte for temp
-        Serial.printf("Unpacked vars: pow=%d hot/cld=%d fan=%d temp=%d vane=%d\n",
-                       ha_powerStatus, ha_coldHotStatus, ha_fanStatus, ha_tempStatus, ha_vaneStatus);
+        if (debug_g) Serial.printf("Unpacked vars: pow=%d hot/cld=%d fan=%d temp=%d vane=%d\n",
+                                      ha_powerStatus, ha_coldHotStatus, ha_fanStatus, ha_tempStatus, ha_vaneStatus);
     }
 }
 
@@ -346,18 +347,20 @@ void ha_nvs_write()
               vars |= ha_coldHotStatus & 0xf;  vars <<= 4;
               vars |= ha_powerStatus   & 0xf; 
      //
-     Serial.printf("Unpacked vars: pow=%d hot/cld=%d fan=%d temp=%d vane=%d\n",
+     if (debug_g) {
+         Serial.printf("Unpacked vars: pow=%d hot/cld=%d fan=%d temp=%d vane=%d\n",
                        ha_powerStatus, ha_coldHotStatus, ha_fanStatus, ha_tempStatus, ha_vaneStatus);   
-     Serial.printf("Packed = %x\n", vars);
+         Serial.printf("Packed = %x\n", vars);
+     }
      //
      esp_err_t err = nvs_set_u32(ha_nvs_handle, ha_nvs_vname, vars);
      if (err != ESP_OK) {
-         Serial.printf("Vars %s can't write, because %s\n", ha_nvs_vname, esp_err_to_name(err));
+         if (debug_g) Serial.printf("Vars %s can't write, because %s\n", ha_nvs_vname, esp_err_to_name(err));
          return;
      }
      err = nvs_commit(ha_nvs_handle);
      if (err != ESP_OK) {
-         Serial.printf("Vars %s can't commit, because %s\n", ha_nvs_vname, esp_err_to_name(err));
+         if (debug_g) Serial.printf("Vars %s can't commit, because %s\n", ha_nvs_vname, esp_err_to_name(err));
      }  
 }
 
@@ -365,14 +368,14 @@ void ha_nvs_write()
 // Send the Heat Pump the proper commands to synchronize with what HA as asked. Basically convert from the above ha_ variables
 // to corresponding hv_ variables and call the send function which will encode the 18 byte frame to the IR transmitter.
 //
-void ha_syncHeadPump()
+void ha_syncHeatPump()
 {
      int hv_mode;
      switch(ha_coldHotStatus) {
          case 1: hv_mode = HVAC_MODE_HOT;  break;
          case 0: hv_mode = HVAC_MODE_COLD; break;
          default:
-                 Serial.printf("Invalid power status =% d\n", ha_coldHotStatus);
+                 if (debug_g) Serial.printf("Invalid power status =% d\n", ha_coldHotStatus);
                  return;
      }
      //
@@ -381,8 +384,8 @@ void ha_syncHeadPump()
      int hv_fanMode   = ha_fanStatus;
      int hv_vanneMode = ha_vaneStatus;
      //
-     Serial.printf("*** SEND HVAC COMMAND: mode=%d, temp=%d, fan=%d, vane=%d, off=%d ***\n",
-                   hv_mode, hv_temp, hv_fanMode, hv_vanneMode, hv_powerOff);
+     if (debug_g) Serial.printf("*** SEND HVAC COMMAND: mode=%d, temp=%d, fan=%d, vane=%d, off=%d ***\n",
+                                 hv_mode, hv_temp, hv_fanMode, hv_vanneMode, hv_powerOff);
      ir_sendHvacMitsubishi(hv_mode, hv_temp, hv_fanMode, hv_vanneMode, hv_powerOff);
 }
 
@@ -433,34 +436,34 @@ unsigned long ha_update_t = 0;      // not sure about callback thread if its thi
 void ha_setFan(float value)   
 {
      ha_fanStatus = value;
-     Serial.print("HA=> "); ha_displayFanStatus();
+     if (debug_g) { Serial.print("HA=> "); ha_displayFanStatus(); }
      ha_update_t = millis() + 5000;
 }
 //
 void ha_setPower(bool value)
 {
      ha_powerStatus = value;
-     Serial.print("HA=> "); ha_displayPowerStatus();
+     if (debug_g) { Serial.print("HA=> "); ha_displayPowerStatus(); }
      ha_update_t = millis() + 5000;
 }
 //
 void ha_setColdHot(bool state)
 {
      ha_coldHotStatus = state;
-     Serial.print("HA=> "); ha_displayColdHotStatus();
+     if (debug_g) { Serial.print("HA=> "); ha_displayColdHotStatus(); }
      ha_update_t = millis() + 5000;
 }
 //
 void ha_setTemp(float value)
 {    ha_tempStatus = value;
-     Serial.print("HA=> "); ha_displayTempStatus();
+     if (debug_g) { Serial.print("HA=> "); ha_displayTempStatus(); }
      ha_update_t = millis() + 5000;
 }
 //
 void ha_setVane(float value)
 {
      ha_vaneStatus = value;
-     Serial.print("HA=> "); ha_displayVaneStatus();
+     if (debug_g) { Serial.print("HA=> "); ha_displayVaneStatus(); }
      ha_update_t = millis() + 5000;
 }
 
@@ -476,9 +479,11 @@ void setup() {
      //
      // Debug stuff
      //
-     Serial.begin(115200);
-     delay(100);
-     Serial.println("RiverView zigbee up");
+     if (debug_g) {
+         Serial.begin(115200);
+         delay(100);
+         Serial.println("RiverView S/W Zibgee 3.0 to Mistubishi IR controller");
+     }
      //
      // Bring up the IR interface & enable interrupts for reset buttons.
      //
@@ -491,19 +496,19 @@ void setup() {
      //
      // Add the zibgee clusters (buttons/sliders etc.)
      //
-     Serial.println("On of Power switch cluster");
-     zbOutlet.setManufacturerAndModel("RiverView", "ESP32C6Light");
+     if (debug_g) Serial.println("On of Power switch cluster");
+     zbOutlet.setManufacturerAndModel("RiverView", "ZigbeeToHvacIR");
      zbOutlet.onPowerOutletChange(ha_setPower);
      //
-     Serial.println("Cold/Hot Switch cluster");
-     zbColdHot.setManufacturerAndModel("RiverView", "ESP32C6Light");
+     if (debug_g) Serial.println("Cold/Hot Switch cluster");
+     zbColdHot.setManufacturerAndModel("RiverView", "ZigbeeToHvacIR");
      zbColdHot.addBinaryOutput();
      zbColdHot.setBinaryOutputApplication(BINARY_OUTPUT_APPLICATION_TYPE_HVAC_OTHER);
      zbColdHot.setBinaryOutputDescription("Cool => Heat");
      zbColdHot.onBinaryOutputChange(ha_setColdHot);
      //
-     Serial.println("Temp Selector cluster");
-     zbTemp.setManufacturerAndModel("RiverView", "ESP32C6Light");
+     if (debug_g) Serial.println("Temp Selector cluster");
+     zbTemp.setManufacturerAndModel("RiverView", "ZigbeeToHvacIR");
      zbTemp.addAnalogOutput();
      zbTemp.setAnalogOutputApplication(ESP_ZB_ZCL_AI_TEMPERATURE_OTHER);
      zbTemp.setAnalogOutputDescription("Temperature C");
@@ -511,8 +516,8 @@ void setup() {
      zbTemp.setAnalogOutputMinMax(0, 30); 
      zbTemp.onAnalogOutputChange(ha_setTemp);
      //
-     Serial.println("Fan Selector cluster");
-     zbFanControl.setManufacturerAndModel("RiverView", "ESP32C6Light");
+     if (debug_g) Serial.println("Fan Selector cluster");
+     zbFanControl.setManufacturerAndModel("RiverView", "ZigbeeToHvacIR");
      zbFanControl.addAnalogOutput();
      zbFanControl.setAnalogOutputApplication(ESP_ZB_ZCL_AI_TEMPERATURE_OTHER);
      zbFanControl.setAnalogOutputDescription("Fan 0-4 (5-auto, 6-silent)");
@@ -520,8 +525,8 @@ void setup() {
      zbFanControl.setAnalogOutputMinMax(0, 7);  
      zbFanControl.onAnalogOutputChange(ha_setFan);
      //
-     Serial.println("Vane Selector cluster");
-     zbVaneControl.setManufacturerAndModel("RiverView", "ESP32C6Light");
+     if (debug_g) Serial.println("Vane Selector cluster");
+     zbVaneControl.setManufacturerAndModel("RiverView", "ZigbeeToHvacIR");
      zbVaneControl.addAnalogOutput();
      zbVaneControl.setAnalogOutputApplication(ESP_ZB_ZCL_AI_TEMPERATURE_OTHER);
      zbVaneControl.setAnalogOutputDescription("Vane (0=Auto,1,2,3,4,5,6=move);");
@@ -529,8 +534,7 @@ void setup() {
      zbVaneControl.setAnalogOutputMinMax(0, 6);  
      zbVaneControl.onAnalogOutputChange(ha_setVane);
      //
-     Serial.println("Set battery power");
-     //
+     if (debug_g) Serial.println("Set battery power");
      zbOutlet.setPowerSource(ZB_POWER_SOURCE_BATTERY, 95, 37);  
      //
      Zigbee.addEndpoint(&zbOutlet);
@@ -542,22 +546,24 @@ void setup() {
      delay(1000);
      // Create a default Zigbee configuration for End Device
      esp_zb_cfg_t zigbeeConfig = ZIGBEE_DEFAULT_ED_CONFIG();
-     Serial.println("Starting Zigbee");
+     if (debug_g) Serial.println("Starting Zigbee");
      delay(1000);
      // When all EPs are registered, start Zigbee in End Device mode
      if (!Zigbee.begin(&zigbeeConfig, false)) { 
-        Serial.println("Zigbee failed to start!");
-        Serial.println("Rebooting ESP32!");
+        if (debug_g) {
+            Serial.println("Zigbee failed to start!");
+            Serial.println("Rebooting ESP32!");
+        }
         ESP.restart();  // If Zigbee failed to start, reboot the device and try again
      }
      delay(5000);       // Seems necessary or it connects without connecting
      //
-     Serial.println("Connecting to network");         
+     if (debug_g) Serial.println("Connecting to network");         
      while (!Zigbee.connected()) {
-        Serial.println("connectint..\n");
+        if (debug_g) Serial.println("connectint..\n");
         delay(1000);
      }
-     Serial.println("Successfully connected to Zigbee network");
+     if (debug_g) Serial.println("Successfully connected to Zigbee network");
      // Delay approx 1s (may be adjusted) to allow establishing proper connection with coordinator, needed for sleepy devices
      delay(1000);
 }
@@ -567,12 +573,14 @@ void setup() {
 void loop() {
      //esp_task_wdt_reset();     // All ok
      //
-     Serial.printf("----------------------------- loop ------------------------------------\n");
-     ha_displayPowerStatus();
-     ha_displayColdHotStatus();
-     ha_displayTempStatus();
-     ha_displayFanStatus();
-     ha_displayVaneStatus();
+     if (debug_g) {
+         Serial.printf("----------------------------- loop ------------------------------------\n");
+         ha_displayPowerStatus();
+         ha_displayColdHotStatus();
+         ha_displayTempStatus();
+         ha_displayFanStatus();
+         ha_displayVaneStatus();
+     }
      delay(10000);
      //
      // If synch required then send the IR now. Wonder if there is problem with mutual exclusion and
@@ -580,8 +588,8 @@ void loop() {
      //
      if ((ha_update_t > 0) && (millis() > ha_update_t)) {
          ha_update_t = 0;
-         Serial.println("Synch with HVAC required\n");
-         ha_syncHeadPump();
+         if (debug_g) Serial.println("Synch with HVAC required\n");
+         ha_syncHeatPump();
          ha_nvs_write(); 
      }
 }
