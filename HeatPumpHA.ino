@@ -455,36 +455,47 @@ unsigned long ha_update_t = 0;      // not sure about callback thread if its thi
 //
 void ha_setFan(float value)   
 {
-     ha_fanStatus = value;
-     if (debug_g) { Serial.print("HA=> "); ha_displayFanStatus(); }
-     ha_update_t = millis() + 5000;
+     if (ha_fanStatus != (int) value) {
+         ha_fanStatus = value;
+         if (debug_g) { Serial.print("HA=> "); ha_displayFanStatus(); }
+         ha_update_t = millis() + 5000;
+     }
 }
 //
 void ha_setPower(bool value)
 {
-     ha_powerStatus = value;
-     if (debug_g) { Serial.print("HA=> "); ha_displayPowerStatus(); }
-     ha_update_t = millis() + 5000;
+     if (ha_powerStatus != value) {
+         ha_powerStatus = value;
+         if (debug_g) { Serial.print("HA=> "); ha_displayPowerStatus(); }
+         ha_update_t = millis() + 5000;
+     }
 }
 //
 void ha_setColdHot(bool state)
 {
-     ha_coldHotStatus = state;
-     if (debug_g) { Serial.print("HA=> "); ha_displayColdHotStatus(); }
-     ha_update_t = millis() + 5000;
+     if (ha_coldHotStatus != state) { 
+         ha_coldHotStatus = state;
+         if (debug_g) { Serial.print("HA=> "); ha_displayColdHotStatus(); }
+         ha_update_t = millis() + 5000;
+     }
 }
 //
 void ha_setTemp(float value)
-{    ha_tempStatus = value;
-     if (debug_g) { Serial.print("HA=> "); ha_displayTempStatus(); }
-     ha_update_t = millis() + 5000;
+{    
+     if (ha_tempStatus != (int) value) {
+         ha_tempStatus = value;
+         if (debug_g) { Serial.print("HA=> "); ha_displayTempStatus(); }
+         ha_update_t = millis() + 5000;
+     }
 }
 //
 void ha_setVane(float value)
 {
-     ha_vaneStatus = value;
-     if (debug_g) { Serial.print("HA=> "); ha_displayVaneStatus(); }
-     ha_update_t = millis() + 5000;
+     if (ha_vaneStatus != (int) value) {
+         ha_vaneStatus = value;
+         if (debug_g) { Serial.print("HA=> "); ha_displayVaneStatus(); }
+         ha_update_t = millis() + 5000;
+     }
 }
 
 // BASIC ARDUINO SETUP
