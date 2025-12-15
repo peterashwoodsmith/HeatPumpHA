@@ -276,11 +276,11 @@ void ir_setup() {
 // 
 // These are the EP control entities each has one cluser which is a 'knob' that controls an HVAC parameter
 //
-ZigbeePowerOutlet zbOutlet      = ZigbeePowerOutlet(10);    // Power on/off knob
-ZigbeeBinary      zbColdHot     = ZigbeeBinary(11);         // Heat or cooling knob
-ZigbeeAnalog      zbTemp        = ZigbeeAnalog(12);         // Desired temperature slider
-ZigbeeAnalog      zbFanControl  = ZigbeeAnalog(13);         // How the fans operate slider
-ZigbeeAnalog      zbVaneControl = ZigbeeAnalog(14);         // Van motion/positions slider
+ZigbeeBinary      zbPower       = ZigbeeBinary(10);      // Power on/off knob
+ZigbeeBinary      zbColdHot     = ZigbeeBinary(11);      // Heat or cooling knob
+ZigbeeAnalog      zbTemp        = ZigbeeAnalog(12);      // Desired temperature slider
+ZigbeeAnalog      zbFanControl  = ZigbeeAnalog(13);      // How the fans operate slider
+ZigbeeAnalog      zbVaneControl = ZigbeeAnalog(14);      // Van motion/positions slider
 
 //
 // These are the variables that maintain the state of what HA has asked to be set
@@ -365,6 +365,25 @@ void ha_nvs_write()
 }
 
 //
+// If we don't write back the attributes to HA, then when we fail and start again, even if we load our attributes
+// from NVS, the HA will often reset the attributes on its side. This seems to prevent that.
+//
+void ha_sync_status()
+{
+     zbVaneControl.setAnalogOutput(ha_vaneStatus);
+     zbFanControl.setAnalogOutput(ha_fanStatus);
+     zbTemp.setAnalogOutput(ha_tempStatus);
+     zbColdHot.setBinaryOutput(ha_coldHotStatus);
+     zbPower.setBinaryOutput(ha_powerStatus);
+     //
+     zbVaneControl.reportAnalogOutput();
+     zbFanControl.reportAnalogOutput();
+     zbTemp.reportAnalogOutput();
+     zbColdHot.reportBinaryOutput();
+     zbPower.reportBinaryOutput();
+}
+
+//
 // Send the Heat Pump the proper commands to synchronize with what HA as asked. Basically convert from the above ha_ variables
 // to corresponding hv_ variables and call the send function which will encode the 18 byte frame to the IR transmitter.
 //
@@ -387,6 +406,7 @@ void ha_syncHeatPump()
      if (debug_g) Serial.printf("*** SEND HVAC COMMAND: mode=%d, temp=%d, fan=%d, vane=%d, off=%d ***\n",
                                  hv_mode, hv_temp, hv_fanMode, hv_vanneMode, hv_powerOff);
      ir_sendHvacMitsubishi(hv_mode, hv_temp, hv_fanMode, hv_vanneMode, hv_powerOff);
+     ha_sync_status();   // make sure HA is synced with what we just sent.
 }
 
 //
@@ -497,8 +517,11 @@ void setup() {
      // Add the zibgee clusters (buttons/sliders etc.)
      //
      if (debug_g) Serial.println("On of Power switch cluster");
-     zbOutlet.setManufacturerAndModel("RiverView", "ZigbeeToHvacIR");
-     zbOutlet.onPowerOutletChange(ha_setPower);
+     zbPower.setManufacturerAndModel("RiverView", "ZigbeeToHvacIR");
+     zbPower.addBinaryOutput();
+     zbPower.setBinaryOutputApplication(BINARY_OUTPUT_APPLICATION_TYPE_HVAC_OTHER);
+     zbPower.setBinaryOutputDescription("Off => On");
+     zbPower.onBinaryOutputChange(ha_setPower);
      //
      if (debug_g) Serial.println("Cold/Hot Switch cluster");
      zbColdHot.setManufacturerAndModel("RiverView", "ZigbeeToHvacIR");
@@ -535,9 +558,9 @@ void setup() {
      zbVaneControl.onAnalogOutputChange(ha_setVane);
      //
      if (debug_g) Serial.println("Set battery power");
-     zbOutlet.setPowerSource(ZB_POWER_SOURCE_BATTERY, 95, 37);  
+     zbPower.setPowerSource(ZB_POWER_SOURCE_BATTERY, 95, 37);  
      //
-     Zigbee.addEndpoint(&zbOutlet);
+     Zigbee.addEndpoint(&zbPower);
      Zigbee.addEndpoint(&zbColdHot);
      Zigbee.addEndpoint(&zbTemp);
      Zigbee.addEndpoint(&zbFanControl);
@@ -566,6 +589,10 @@ void setup() {
      if (debug_g) Serial.println("Successfully connected to Zigbee network");
      // Delay approx 1s (may be adjusted) to allow establishing proper connection with coordinator, needed for sleepy devices
      delay(1000);
+     //
+     // Try to sync with HA 
+     //
+     ha_sync_status();
 }
 
 // NOTHING TO DO IN MAIN LOOP ITS ALL CALLBACK BASED SO JUST PRINT STATUS.
