@@ -415,30 +415,30 @@ void ha_syncHeatPump()
 //
 void ha_displayPowerStatus()
 {
-     Serial.println(ha_powerStatus ? "POWER ON" : "POWER OFF"); 
+     Serial.printf("POWER STATUS     = %s\n", ha_powerStatus ? "ON" : "OFF"); 
 }
 //
 void ha_displayFanStatus()
 {     
-     Serial.printf("FAN STATUS = %d\n", ha_fanStatus);
+     Serial.printf("FAN STATUS       = %d\n", ha_fanStatus);
 }
 //
 void ha_displayVaneStatus()
 {
      if ((ha_vaneStatus < 0)||(ha_vaneStatus > 6))
-        Serial.printf("VANE STATUS = %d ????\n", ha_vaneStatus);
+        Serial.printf("VANE STATUS      = %d ????\n", ha_vaneStatus);
      else
-        Serial.printf("VANE STATUS = %d\n", ha_vaneStatus);
+        Serial.printf("VANE STATUS      = %d\n", ha_vaneStatus);
 }
 //
 void ha_displayColdHotStatus()
 {    
-     Serial.printf("COOL or HEAT STATUS = %s (%x)\n", ha_coldHotStatus ? "HEAT" : "COOL", (unsigned int) ha_coldHotStatus);
+     Serial.printf("COOL/HEAT STATUS = %s (%x)\n", ha_coldHotStatus ? "HEAT" : "COOL", (unsigned int) ha_coldHotStatus);
 }
 //
 void ha_displayTempStatus()
 {    
-     Serial.printf("TEMP STATUS = %d\n", ha_tempStatus);
+     Serial.printf("TEMP STATUS      = %d\n", ha_tempStatus);
 }
 
 //
@@ -509,16 +509,16 @@ const uint8_t RGB_LED_BLUE   = 4;
 const uint8_t RGB_LED_ORANGE = 5;
 const uint8_t RGB_MAX        = RGB_BRIGHTNESS;
 const uint8_t RGB_MIN        = 0;
+#define       RGB_ORDER        LED_COLOR_ORDER_RGB    // Compiler problems passing enums, have to be explicit
 //
 void rgb_led_set(int color) {
-     rgbLedWrite(RGB_BUILTIN, 0, 0, 0);
-     delay(100);
      switch(color) {                                  //RED     GREEN     BLUE
-         case RGB_LED_GREEN : rgbLedWrite(RGB_BUILTIN, RGB_MIN, RGB_MAX,  RGB_MIN); break;
-         case RGB_LED_WHITE : rgbLedWrite(RGB_BUILTIN, RGB_MAX, RGB_MAX,  RGB_MAX); break;
-         case RGB_LED_RED   : rgbLedWrite(RGB_BUILTIN, RGB_MAX, RGB_MIN,  RGB_MIN); break;          
-         case RGB_LED_BLUE  : rgbLedWrite(RGB_BUILTIN, RGB_MIN, RGB_MIN,  RGB_MAX); break;
-         case RGB_LED_ORANGE: rgbLedWrite(RGB_BUILTIN, RGB_MAX, RGB_MAX/2,RGB_MIN); break;
+         case RGB_LED_GREEN : rgbLedWriteOrdered(RGB_BUILTIN, RGB_ORDER, RGB_MIN, RGB_MAX,  RGB_MIN); break;
+         case RGB_LED_WHITE : rgbLedWriteOrdered(RGB_BUILTIN, RGB_ORDER, RGB_MAX, RGB_MAX,  RGB_MAX); break;
+         case RGB_LED_RED   : rgbLedWriteOrdered(RGB_BUILTIN, RGB_ORDER, RGB_MAX, RGB_MIN,  RGB_MIN); break;          
+         case RGB_LED_BLUE  : rgbLedWriteOrdered(RGB_BUILTIN, RGB_ORDER, RGB_MIN, RGB_MIN,  RGB_MAX); break;
+         case RGB_LED_ORANGE: rgbLedWriteOrdered(RGB_BUILTIN, RGB_ORDER, RGB_MAX, RGB_MAX/2,RGB_MIN); break;
+         case RGB_LED_OFF   : rgbLedWriteOrdered(RGB_BUILTIN, RGB_ORDER, RGB_MIN, RGB_MIN,  RGB_MIN); break;
      }
      delay(1000);
 }
