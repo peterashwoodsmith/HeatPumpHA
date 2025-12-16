@@ -516,7 +516,7 @@ void rgb_led_set(int color) {
          case RGB_LED_RED   : rgbLedWrite(RGB_BUILTIN, RGB_BRIGHTNESS, 0, 0);                 break;
          case RGB_LED_GREEN : rgbLedWrite(RGB_BUILTIN, 0, RGB_BRIGHTNESS, 0);                 break;
          case RGB_LED_BLUE  : rgbLedWrite(RGB_BUILTIN, 0, 0, RGB_BRIGHTNESS);                 break;
-         case RGB_LED_ORANGE: rgbLedWrite(RGB_BUILTIN, RGB_BRIGHTNESS, RGB_BRIGHTNESS/2, 0); break;
+         case RGB_LED_ORANGE: rgbLedWrite(RGB_BUILTIN, RGB_BRIGHTNESS, RGB_BRIGHTNESS/2, 0);  break;
      }
 }
 
@@ -539,6 +539,7 @@ void setup() {
      }
      //
      rgb_led_set(RGB_LED_RED);
+     delay(1000);
 
      //
      // Bring up the IR interface & enable interrupts for reset buttons.
@@ -608,6 +609,7 @@ void setup() {
      if (debug_g) Serial.println("Starting Zigbee");
      delay(1000);
      rgb_led_set(RGB_LED_ORANGE);
+     delay(1000);
      // When all EPs are registered, start Zigbee in End Device mode
      if (!Zigbee.begin(&zigbeeConfig, false)) { 
         if (debug_g) {
@@ -635,11 +637,13 @@ void setup() {
      //
      ha_sync_status();
      rgb_led_set(RGB_LED_GREEN);
+     delay(1000);
 }
 
 // NOTHING TO DO IN MAIN LOOP ITS ALL CALLBACK BASED SO JUST PRINT STATUS.
 
 void loop() {
+     rgb_led_set(RGB_LED_GREEN);
      //esp_task_wdt_reset();     // All ok
      //
      if (debug_g) {
@@ -650,7 +654,11 @@ void loop() {
          ha_displayFanStatus();
          ha_displayVaneStatus();
      }
-     delay(10000);
+     delay(1000);
+     rgb_led_set(RGB_LED_OFF);
+     delay(1000);
+     rgb_led_set(RGB_LED_GREEN);
+     delay(5000);
      //
      // If synch required then send the IR now. Wonder if there is problem with mutual exclusion and
      // callback functions. Are they in same thread? If not this variable is volatile.
@@ -661,6 +669,4 @@ void loop() {
          ha_syncHeatPump();
          ha_nvs_write(); 
      }
-     rgb_led_set(RGB_LED_GREEN);
-}
 }
