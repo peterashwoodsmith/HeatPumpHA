@@ -23,6 +23,7 @@
 #error "Zigbee end device mode is not selected in Tools->Zigbee mode"
 #endif
 #include "Zigbee.h"
+#include <pins_arduino.h>
 
 const int debug_g = 1;
 
@@ -498,6 +499,27 @@ void ha_setVane(float value)
      }
 }
 
+//
+// We use the color RGB LED to indicate state.
+//
+const int RGB_LED_OFF    = 0;        // Enums are causing compiler problems when passed as first argument.
+const int RGB_LED_WHITE  = 1;        // so back to old school.
+const int RGB_LED_RED    = 2;
+const int RGB_LED_GREEN  = 3;
+const int RGB_LED_BLUE   = 4;
+const int RGB_LED_ORANGE = 5;
+//
+void rgb_led_set(int color) {
+     switch(color) {
+         case RGB_LED_OFF   : digitalWrite(RGB_BUILTIN, LOW);                                 break;
+         case RGB_LED_WHITE : digitalWrite(RGB_BUILTIN, HIGH);                                break;
+         case RGB_LED_RED   : rgbLedWrite(RGB_BUILTIN, RGB_BRIGHTNESS, 0, 0);                 break;
+         case RGB_LED_GREEN : rgbLedWrite(RGB_BUILTIN, 0, RGB_BRIGHTNESS, 0);                 break;
+         case RGB_LED_BLUE  : rgbLedWrite(RGB_BUILTIN, 0, 0, RGB_BRIGHTNESS);                 break;
+         case RGB_LED_ORANGE: rgbLedWrite(RGB_BUILTIN, RGB_BRIGHTNESS, RGB_BRIGHTNESS/2, 0); break;
+     }
+}
+
 // BASIC ARDUINO SETUP
 
 void setup() {
@@ -515,6 +537,9 @@ void setup() {
          delay(100);
          Serial.println("RiverView S/W Zibgee 3.0 to Mistubishi IR controller");
      }
+     //
+     rgb_led_set(RGB_LED_RED);
+
      //
      // Bring up the IR interface & enable interrupts for reset buttons.
      //
@@ -556,7 +581,7 @@ void setup() {
      zbFanControl.setAnalogOutputApplication(ESP_ZB_ZCL_AI_TEMPERATURE_OTHER);
      zbFanControl.setAnalogOutputDescription("Fan 0-4 (5-auto, 6-silent)");
      zbFanControl.setAnalogOutputResolution(1);
-     zbFanControl.setAnalogOutputMinMax(0, 7);  
+     zbFanControl.setAnalogOutputMinMax(0, 6);  
      zbFanControl.onAnalogOutputChange(ha_setFan);
      //
      if (debug_g) Serial.println("Vane Selector cluster");
@@ -582,6 +607,7 @@ void setup() {
      esp_zb_cfg_t zigbeeConfig = ZIGBEE_DEFAULT_ED_CONFIG();
      if (debug_g) Serial.println("Starting Zigbee");
      delay(1000);
+     rgb_led_set(RGB_LED_ORANGE);
      // When all EPs are registered, start Zigbee in End Device mode
      if (!Zigbee.begin(&zigbeeConfig, false)) { 
         if (debug_g) {
@@ -590,12 +616,16 @@ void setup() {
         }
         ESP.restart();  // If Zigbee failed to start, reboot the device and try again
      }
+     rgb_led_set(RGB_LED_BLUE);
      delay(5000);       // Seems necessary or it connects without connecting
      //
      if (debug_g) Serial.println("Connecting to network");         
      while (!Zigbee.connected()) {
+        rgb_led_set(RGB_LED_OFF);
+        delay(500);
+        rgb_led_set(RGB_LED_BLUE);
+        delay(500);
         if (debug_g) Serial.println("connectint..\n");
-        delay(1000);
      }
      if (debug_g) Serial.println("Successfully connected to Zigbee network");
      // Delay approx 1s (may be adjusted) to allow establishing proper connection with coordinator, needed for sleepy devices
@@ -604,6 +634,7 @@ void setup() {
      // Try to sync with HA 
      //
      ha_sync_status();
+     rgb_led_set(RGB_LED_GREEN);
 }
 
 // NOTHING TO DO IN MAIN LOOP ITS ALL CALLBACK BASED SO JUST PRINT STATUS.
@@ -630,4 +661,6 @@ void loop() {
          ha_syncHeatPump();
          ha_nvs_write(); 
      }
+     rgb_led_set(RGB_LED_GREEN);
+}
 }
