@@ -23,7 +23,6 @@
 #error "Zigbee end device mode is not selected in Tools->Zigbee mode"
 #endif
 #include "Zigbee.h"
-#include <pins_arduino.h>
 
 const int debug_g = 1;
 
@@ -502,22 +501,26 @@ void ha_setVane(float value)
 //
 // We use the color RGB LED to indicate state.
 //
-const int RGB_LED_OFF    = 0;        // Enums are causing compiler problems when passed as first argument.
-const int RGB_LED_WHITE  = 1;        // so back to old school.
-const int RGB_LED_RED    = 2;
-const int RGB_LED_GREEN  = 3;
-const int RGB_LED_BLUE   = 4;
-const int RGB_LED_ORANGE = 5;
+const uint8_t RGB_LED_OFF    = 0;        // Enums are causing compiler problems when passed as first argument.
+const uint8_t RGB_LED_WHITE  = 1;        // so back to old school.
+const uint8_t RGB_LED_RED    = 2;
+const uint8_t RGB_LED_GREEN  = 3;
+const uint8_t RGB_LED_BLUE   = 4;
+const uint8_t RGB_LED_ORANGE = 5;
+const uint8_t RGB_MAX        = RGB_BRIGHTNESS;
+const uint8_t RGB_MIN        = 0;
 //
 void rgb_led_set(int color) {
-     switch(color) {
-         case RGB_LED_OFF   : digitalWrite(RGB_BUILTIN, LOW);                                 break;
-         case RGB_LED_WHITE : digitalWrite(RGB_BUILTIN, HIGH);                                break;
-         case RGB_LED_RED   : rgbLedWrite(RGB_BUILTIN, RGB_BRIGHTNESS, 0, 0);                 break;
-         case RGB_LED_GREEN : rgbLedWrite(RGB_BUILTIN, 0, RGB_BRIGHTNESS, 0);                 break;
-         case RGB_LED_BLUE  : rgbLedWrite(RGB_BUILTIN, 0, 0, RGB_BRIGHTNESS);                 break;
-         case RGB_LED_ORANGE: rgbLedWrite(RGB_BUILTIN, RGB_BRIGHTNESS, RGB_BRIGHTNESS/2, 0);  break;
+     rgbLedWrite(RGB_BUILTIN, 0, 0, 0);
+     delay(100);
+     switch(color) {                                  //RED     GREEN     BLUE
+         case RGB_LED_GREEN : rgbLedWrite(RGB_BUILTIN, RGB_MIN, RGB_MAX,  RGB_MIN); break;
+         case RGB_LED_WHITE : rgbLedWrite(RGB_BUILTIN, RGB_MAX, RGB_MAX,  RGB_MAX); break;
+         case RGB_LED_RED   : rgbLedWrite(RGB_BUILTIN, RGB_MAX, RGB_MIN,  RGB_MIN); break;          
+         case RGB_LED_BLUE  : rgbLedWrite(RGB_BUILTIN, RGB_MIN, RGB_MIN,  RGB_MAX); break;
+         case RGB_LED_ORANGE: rgbLedWrite(RGB_BUILTIN, RGB_MAX, RGB_MAX/2,RGB_MIN); break;
      }
+     delay(1000);
 }
 
 // BASIC ARDUINO SETUP
@@ -539,7 +542,6 @@ void setup() {
      }
      //
      rgb_led_set(RGB_LED_RED);
-     delay(1000);
 
      //
      // Bring up the IR interface & enable interrupts for reset buttons.
@@ -607,9 +609,7 @@ void setup() {
      // Create a default Zigbee configuration for End Device
      esp_zb_cfg_t zigbeeConfig = ZIGBEE_DEFAULT_ED_CONFIG();
      if (debug_g) Serial.println("Starting Zigbee");
-     delay(1000);
      rgb_led_set(RGB_LED_ORANGE);
-     delay(1000);
      // When all EPs are registered, start Zigbee in End Device mode
      if (!Zigbee.begin(&zigbeeConfig, false)) { 
         if (debug_g) {
@@ -623,10 +623,8 @@ void setup() {
      //
      if (debug_g) Serial.println("Connecting to network");         
      while (!Zigbee.connected()) {
-        rgb_led_set(RGB_LED_OFF);
-        delay(500);
+        rgb_led_set(RGB_LED_OFF);   // the led sets have delays built in
         rgb_led_set(RGB_LED_BLUE);
-        delay(500);
         if (debug_g) Serial.println("connectint..\n");
      }
      if (debug_g) Serial.println("Successfully connected to Zigbee network");
@@ -637,7 +635,6 @@ void setup() {
      //
      ha_sync_status();
      rgb_led_set(RGB_LED_GREEN);
-     delay(1000);
 }
 
 // NOTHING TO DO IN MAIN LOOP ITS ALL CALLBACK BASED SO JUST PRINT STATUS.
@@ -654,9 +651,7 @@ void loop() {
          ha_displayFanStatus();
          ha_displayVaneStatus();
      }
-     delay(1000);
      rgb_led_set(RGB_LED_OFF);
-     delay(1000);
      rgb_led_set(RGB_LED_GREEN);
      delay(5000);
      //
