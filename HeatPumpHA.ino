@@ -17,9 +17,12 @@
 //          Tools/partition scheme: 4MB with spiffs
 //          Tools/zibgee mode ED (end device)
 //
+//  IN PROGRESS:
+//      - sleep mode expirements, failed to update from HA but does eventually update.
+//
 //  TODO:
 //      - watch dog for main loop
-//      - sleep mode expirements
+//      
 //      - battery min voltage experiments
 //      - cool/heat switch instead of on/off
 //
@@ -31,6 +34,11 @@
 #include "Zigbee.h"
 
 const int debug_g = 1;
+
+// 
+// Function puts us to sleep, its defined later on but forward declared here.
+//
+extern void ha_gotoSleepNow(); 
 
 //
 // Interrupt service routines for the reset button, must be 5 seconds between the
@@ -58,8 +66,9 @@ void isr_resetButtonRelease()
              nvs_flash_erase();
          }
      }
-     Zigbee.factoryReset(true);
-     ESP.restart();
+     Zigbee.factoryReset(false);
+     delay(500);
+     ha_gotoSleepNow();
 }
 
 //
@@ -533,7 +542,7 @@ void rgb_led_set(int color) {
 //
 void rgb_led_flash(int color, int restore_color)
 {
-     for(int i = 0; i < 10; i++) {
+     for(int i = 0; i < 5; i++) {
         rgb_led_set(color);
         delay(100);
         rgb_led_set(RGB_LED_OFF);
@@ -549,7 +558,7 @@ void rgb_led_flash(int color, int restore_color)
 void ha_processPending() {
      //esp_task_wdt_reset();     // All ok
      //
-     uint32_t end_t = millis() + (1000 * 30);   
+     uint32_t end_t = millis() + (1000 * 10);   
      do {
         if (debug_g) {
             Serial.printf("----------------------------- wait for HA  msgs ------------------------------------\n");
@@ -560,7 +569,7 @@ void ha_processPending() {
             ha_displayVaneStatus();
         }
         rgb_led_flash(RGB_LED_GREEN, RGB_LED_GREEN);
-        delay(2000);
+        delay(500);
         //
         // If synch required then send the IR now. Wonder if there is problem with mutual exclusion and
         // callback functions. Are they in same thread? If not this variable is volatile.
@@ -575,8 +584,23 @@ void ha_processPending() {
      } while((millis() <= end_t) || (ha_update_t > 0));    // keep going till end time or till end of work
 }
 
-// BASIC ARDUINO SETUP
+//
+// Go to sleep for some number of seconds then we will be woken up to start all over again in the
+// setup() function. The loop() will never get called.
+//
+void ha_gotoSleepNow()
+{
+#    define uS_TO_S_FACTOR 1000000ULL /* Conversion factor for micro seconds to seconds */
+     esp_sleep_enable_timer_wakeup(30 * uS_TO_S_FACTOR);
+     rgb_led_set(RGB_LED_OFF);
+     if (debug_g) { Serial.println("going back to sleep"); delay(2000); }
+     esp_deep_sleep_start();
+}
 
+// 
+// We woke up, configure zibgee and wait for connection, then process any pending requests
+// and go back to sleep. 
+//
 void setup() {
      // 
      // If we don't get watch dog resets each 5 minutes then reboot.
@@ -657,14 +681,15 @@ void setup() {
      Zigbee.addEndpoint(&zbFanControl);
      Zigbee.addEndpoint(&zbVaneControl);
      //
-     delay(1000);
      // Create a default Zigbee configuration for End Device
-     esp_zb_cfg_t zigbeeConfig = ZIGBEE_DEFAULT_ED_CONFIG();
-     if (debug_g) Serial.println("Starting Zigbee");
      //
+     esp_zb_cfg_t zigbeeConfig = ZIGBEE_DEFAULT_ED_CONFIG();
+     //
+     if (debug_g) Serial.println("Starting Zigbee");
      rgb_led_flash(RGB_LED_ORANGE, RGB_LED_ORANGE);
      //
      // When all EPs are registered, start Zigbee in End Device mode
+     //
      if (!Zigbee.begin(&zigbeeConfig, false)) { 
         if (debug_g) {
             Serial.println("Zigbee failed to start!");
@@ -672,15 +697,16 @@ void setup() {
         }
         rgb_led_flash(RGB_LED_RED, RGB_LED_RED);
         rgb_led_flash(RGB_LED_RED, RGB_LED_RED);
-        ESP.restart();  // If Zigbee failed to start, reboot the device and try again
+        ha_gotoSleepNow();
      }
-     delay(5000);       // Seems necessary or it connects without connecting
+     //
+     // Now connect to network.
      //
      if (debug_g) Serial.println("Connecting to network");   
      int tries = 0;      
      while (!Zigbee.connected()) {
         rgb_led_flash(RGB_LED_BLUE, RGB_LED_BLUE);   // the led sets have delays built in
-        delay(1000);
+        delay(500);
         if (debug_g) Serial.println("connecting..\n");
         if (tries ++ > 120) {
            if (debug_g) {
@@ -689,13 +715,11 @@ void setup() {
            }
            rgb_led_flash(RGB_LED_ORANGE, RGB_LED_ORANGE);
            rgb_led_flash(RGB_LED_RED, RGB_LED_RED);
-           ESP.restart();  // If Zigbee failed to start, reboot the device and try again
+           ha_gotoSleepNow();   // sleep and retry later
         }
      }
      rgb_led_flash(RGB_LED_BLUE, RGB_LED_BLUE);   
      if (debug_g) Serial.println("Successfully connected to Zigbee network");
-     // Delay approx 1s (may be adjusted) to allow establishing proper connection with coordinator, needed for sleepy devices
-     delay(1000);
      //
      // Try to sync with HA (i.e. update from NVS back to HA.)
      //
@@ -704,15 +728,7 @@ void setup() {
      // And try to get any pending requests, we'll stay for 30 seconds looking then exit and sleep again.
      //
      ha_processPending();
-     //
-     // Go to sleep for some number of seconds then we will be woken up to start all over again in the
-     // setup() function. The loop() will never get called.
-     //
-#    define uS_TO_S_FACTOR 1000000ULL /* Conversion factor for micro seconds to seconds */
-     esp_sleep_enable_timer_wakeup(60 * uS_TO_S_FACTOR);
-     rgb_led_set(RGB_LED_OFF);
-     if (debug_g) Serial.println("going back to sleep");
-     esp_deep_sleep_start();
+     ha_gotoSleepNow();
 }
 
 //
