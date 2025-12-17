@@ -17,6 +17,12 @@
 //          Tools/partition scheme: 4MB with spiffs
 //          Tools/zibgee mode ED (end device)
 //
+//  TODO:
+//      - watch dog for main loop
+//      - sleep mode expirements
+//      - battery min voltage experiments
+//      - cool/heat switch instead of on/off
+//
 #include <esp_task_wdt.h>
 #include <nvs_flash.h>
 #ifndef ZIGBEE_MODE_ED
@@ -520,7 +526,20 @@ void rgb_led_set(int color) {
          case RGB_LED_ORANGE: rgbLedWriteOrdered(RGB_BUILTIN, RGB_ORDER, RGB_MAX, RGB_MAX/2,RGB_MIN); break;
          case RGB_LED_OFF   : rgbLedWriteOrdered(RGB_BUILTIN, RGB_ORDER, RGB_MIN, RGB_MIN,  RGB_MIN); break;
      }
-     delay(1000);
+}
+//
+//   Simple LED flash routine, should really use a background task to do this.. tbd. Flash the chosen color and
+//   then return to the restore color after.
+//
+void rgb_led_flash(int color, int restore_color)
+{
+     for(int i = 0; i < 10; i++) {
+        rgb_led_set(color);
+        delay(100);
+        rgb_led_set(RGB_LED_OFF);
+        delay(100);
+     }
+     rgb_led_set(restore_color);
 }
 
 // BASIC ARDUINO SETUP
@@ -541,7 +560,7 @@ void setup() {
          Serial.println("RiverView S/W Zibgee 3.0 to Mistubishi IR controller");
      }
      //
-     rgb_led_set(RGB_LED_RED);
+     rgb_led_flash(RGB_LED_RED, RGB_LED_RED);
 
      //
      // Bring up the IR interface & enable interrupts for reset buttons.
@@ -609,24 +628,38 @@ void setup() {
      // Create a default Zigbee configuration for End Device
      esp_zb_cfg_t zigbeeConfig = ZIGBEE_DEFAULT_ED_CONFIG();
      if (debug_g) Serial.println("Starting Zigbee");
-     rgb_led_set(RGB_LED_ORANGE);
+     //
+     rgb_led_flash(RGB_LED_ORANGE, RGB_LED_ORANGE);
+     //
      // When all EPs are registered, start Zigbee in End Device mode
      if (!Zigbee.begin(&zigbeeConfig, false)) { 
         if (debug_g) {
             Serial.println("Zigbee failed to start!");
             Serial.println("Rebooting ESP32!");
         }
+        rgb_led_flash(RGB_LED_RED, RGB_LED_RED);
+        rgb_led_flash(RGB_LED_RED, RGB_LED_RED);
         ESP.restart();  // If Zigbee failed to start, reboot the device and try again
      }
-     rgb_led_set(RGB_LED_BLUE);
      delay(5000);       // Seems necessary or it connects without connecting
      //
-     if (debug_g) Serial.println("Connecting to network");         
+     if (debug_g) Serial.println("Connecting to network");   
+     int tries = 0;      
      while (!Zigbee.connected()) {
-        rgb_led_set(RGB_LED_OFF);   // the led sets have delays built in
-        rgb_led_set(RGB_LED_BLUE);
-        if (debug_g) Serial.println("connectint..\n");
+        rgb_led_flash(RGB_LED_BLUE, RGB_LED_BLUE);   // the led sets have delays built in
+        delay(1000);
+        if (debug_g) Serial.println("connecting..\n");
+        if (tries ++ > 120) {
+           if (debug_g) {
+               Serial.println("Zigbee failed to connect!");
+               Serial.println("Rebooting ESP32!");
+           }
+           rgb_led_flash(RGB_LED_ORANGE, RGB_LED_ORANGE);
+           rgb_led_flash(RGB_LED_RED, RGB_LED_RED);
+           ESP.restart();  // If Zigbee failed to start, reboot the device and try again
+        }
      }
+     rgb_led_flash(RGB_LED_BLUE, RGB_LED_BLUE);   
      if (debug_g) Serial.println("Successfully connected to Zigbee network");
      // Delay approx 1s (may be adjusted) to allow establishing proper connection with coordinator, needed for sleepy devices
      delay(1000);
@@ -634,13 +667,11 @@ void setup() {
      // Try to sync with HA 
      //
      ha_sync_status();
-     rgb_led_set(RGB_LED_GREEN);
 }
 
 // NOTHING TO DO IN MAIN LOOP ITS ALL CALLBACK BASED SO JUST PRINT STATUS.
 
 void loop() {
-     rgb_led_set(RGB_LED_GREEN);
      //esp_task_wdt_reset();     // All ok
      //
      if (debug_g) {
@@ -651,9 +682,8 @@ void loop() {
          ha_displayFanStatus();
          ha_displayVaneStatus();
      }
-     rgb_led_set(RGB_LED_OFF);
-     rgb_led_set(RGB_LED_GREEN);
-     delay(5000);
+     rgb_led_flash(RGB_LED_GREEN, RGB_LED_GREEN);
+     delay(2000);
      //
      // If synch required then send the IR now. Wonder if there is problem with mutual exclusion and
      // callback functions. Are they in same thread? If not this variable is volatile.
@@ -663,5 +693,6 @@ void loop() {
          if (debug_g) Serial.println("Synch with HVAC required\n");
          ha_syncHeatPump();
          ha_nvs_write(); 
+         rgb_led_flash(RGB_LED_WHITE, RGB_LED_GREEN);   // flash white, return to green
      }
 }
