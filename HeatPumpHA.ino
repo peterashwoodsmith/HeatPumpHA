@@ -542,6 +542,39 @@ void rgb_led_flash(int color, int restore_color)
      rgb_led_set(restore_color);
 }
 
+//
+// We have just woken up and are connected to HA. Let's see if we have any pending requests.
+// Well stay here for 30 seconds to see. Then go back to sleep.
+//
+void ha_processPending() {
+     //esp_task_wdt_reset();     // All ok
+     //
+     uint32_t end_t = millis() + (1000 * 30);   
+     do {
+        if (debug_g) {
+            Serial.printf("----------------------------- wait for HA  msgs ------------------------------------\n");
+            ha_displayPowerStatus();
+            ha_displayColdHotStatus();
+            ha_displayTempStatus();
+            ha_displayFanStatus();
+            ha_displayVaneStatus();
+        }
+        rgb_led_flash(RGB_LED_GREEN, RGB_LED_GREEN);
+        delay(2000);
+        //
+        // If synch required then send the IR now. Wonder if there is problem with mutual exclusion and
+        // callback functions. Are they in same thread? If not this variable is volatile.
+        //
+        if ((ha_update_t > 0) && (millis() > ha_update_t)) {
+            ha_update_t = 0;
+            if (debug_g) Serial.println("Synch with HVAC required\n");
+            ha_syncHeatPump();
+            ha_nvs_write(); 
+            rgb_led_flash(RGB_LED_WHITE, RGB_LED_GREEN);   // flash white, return to green
+        }
+     } while((millis() <= end_t) || (ha_update_t > 0));    // keep going till end time or till end of work
+}
+
 // BASIC ARDUINO SETUP
 
 void setup() {
@@ -664,35 +697,30 @@ void setup() {
      // Delay approx 1s (may be adjusted) to allow establishing proper connection with coordinator, needed for sleepy devices
      delay(1000);
      //
-     // Try to sync with HA 
+     // Try to sync with HA (i.e. update from NVS back to HA.)
      //
      ha_sync_status();
+     //
+     // And try to get any pending requests, we'll stay for 30 seconds looking then exit and sleep again.
+     //
+     ha_processPending();
+     //
+     // Go to sleep for some number of seconds then we will be woken up to start all over again in the
+     // setup() function. The loop() will never get called.
+     //
+#    define uS_TO_S_FACTOR 1000000ULL /* Conversion factor for micro seconds to seconds */
+     esp_sleep_enable_timer_wakeup(60 * uS_TO_S_FACTOR);
+     rgb_led_set(RGB_LED_OFF);
+     if (debug_g) Serial.println("going back to sleep");
+     esp_deep_sleep_start();
 }
 
-// NOTHING TO DO IN MAIN LOOP ITS ALL CALLBACK BASED SO JUST PRINT STATUS.
-
-void loop() {
-     //esp_task_wdt_reset();     // All ok
-     //
-     if (debug_g) {
-         Serial.printf("----------------------------- loop ------------------------------------\n");
-         ha_displayPowerStatus();
-         ha_displayColdHotStatus();
-         ha_displayTempStatus();
-         ha_displayFanStatus();
-         ha_displayVaneStatus();
-     }
-     rgb_led_flash(RGB_LED_GREEN, RGB_LED_GREEN);
-     delay(2000);
-     //
-     // If synch required then send the IR now. Wonder if there is problem with mutual exclusion and
-     // callback functions. Are they in same thread? If not this variable is volatile.
-     //
-     if ((ha_update_t > 0) && (millis() > ha_update_t)) {
-         ha_update_t = 0;
-         if (debug_g) Serial.println("Synch with HVAC required\n");
-         ha_syncHeatPump();
-         ha_nvs_write(); 
-         rgb_led_flash(RGB_LED_WHITE, RGB_LED_GREEN);   // flash white, return to green
-     }
+//
+// NOTHING TO DO IN MAIN LOOP ITS ALL CALLBACK BASED SO JUST PRINT STATUS but if you disable the sleep
+// you can just stay in the processPending forever.
+//
+void loop()
+{
+     if (debug_g) Serial.println("LOOPING - should not be here if using sleep mode");
+     ha_processPending();
 }
