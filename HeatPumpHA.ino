@@ -473,7 +473,7 @@ void ha_setFan(float value)
      if (ha_fanStatus != (int) value) {
          ha_fanStatus = value;
          if (debug_g) { Serial.print("HA=> "); ha_displayFanStatus(); }
-         ha_update_t = millis() + 500;
+         ha_update_t = millis() + 5000;
      }
 }
 //
@@ -482,7 +482,7 @@ void ha_setPower(bool value)
      if (ha_powerStatus != value) {
          ha_powerStatus = value;
          if (debug_g) { Serial.print("HA=> "); ha_displayPowerStatus(); }
-         ha_update_t = millis() + 500;
+         ha_update_t = millis() + 5000;
      }
 }
 //
@@ -491,7 +491,7 @@ void ha_setColdHot(bool state)
      if (ha_coldHotStatus != state) { 
          ha_coldHotStatus = state;
          if (debug_g) { Serial.print("HA=> "); ha_displayColdHotStatus(); }
-         ha_update_t = millis() + 500;
+         ha_update_t = millis() + 5000;
      }
 }
 //
@@ -500,7 +500,7 @@ void ha_setTemp(float value)
      if (ha_tempStatus != (int) value) {
          ha_tempStatus = value;
          if (debug_g) { Serial.print("HA=> "); ha_displayTempStatus(); }
-         ha_update_t = millis() + 500;
+         ha_update_t = millis() + 5000;
      }
 }
 //
@@ -509,7 +509,7 @@ void ha_setVane(float value)
      if (ha_vaneStatus != (int) value) {
          ha_vaneStatus = value;
          if (debug_g) { Serial.print("HA=> "); ha_displayVaneStatus(); }
-         ha_update_t = millis() + 500;
+         ha_update_t = millis() + 5000;
      }
 }
 
@@ -558,7 +558,7 @@ void rgb_led_flash(int color, int restore_color)
 void ha_processPending() {
      //esp_task_wdt_reset();     // All ok
      //
-     uint32_t end_t = millis() + 1500;   
+     uint32_t end_t = millis() + 2000;   
      do { 
         rgb_led_flash(RGB_LED_GREEN, RGB_LED_GREEN);
         delay(50);
@@ -596,7 +596,7 @@ void ha_gotoSleepNow()
      Zigbee.stop();
      delay(100);
  #   define uS_TO_S_FACTOR 1000000ULL  
-     esp_sleep_enable_timer_wakeup(45 * uS_TO_S_FACTOR);
+     esp_sleep_enable_timer_wakeup(60 * uS_TO_S_FACTOR);
      esp_deep_sleep_start();
 }
 
