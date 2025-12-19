@@ -473,7 +473,7 @@ void ha_setFan(float value)
      if (ha_fanStatus != (int) value) {
          ha_fanStatus = value;
          if (debug_g) { Serial.print("HA=> "); ha_displayFanStatus(); }
-         ha_update_t = millis() + 5000;
+         ha_update_t = millis() + 500;
      }
 }
 //
@@ -482,7 +482,7 @@ void ha_setPower(bool value)
      if (ha_powerStatus != value) {
          ha_powerStatus = value;
          if (debug_g) { Serial.print("HA=> "); ha_displayPowerStatus(); }
-         ha_update_t = millis() + 5000;
+         ha_update_t = millis() + 500;
      }
 }
 //
@@ -491,7 +491,7 @@ void ha_setColdHot(bool state)
      if (ha_coldHotStatus != state) { 
          ha_coldHotStatus = state;
          if (debug_g) { Serial.print("HA=> "); ha_displayColdHotStatus(); }
-         ha_update_t = millis() + 5000;
+         ha_update_t = millis() + 500;
      }
 }
 //
@@ -500,7 +500,7 @@ void ha_setTemp(float value)
      if (ha_tempStatus != (int) value) {
          ha_tempStatus = value;
          if (debug_g) { Serial.print("HA=> "); ha_displayTempStatus(); }
-         ha_update_t = millis() + 5000;
+         ha_update_t = millis() + 500;
      }
 }
 //
@@ -509,7 +509,7 @@ void ha_setVane(float value)
      if (ha_vaneStatus != (int) value) {
          ha_vaneStatus = value;
          if (debug_g) { Serial.print("HA=> "); ha_displayVaneStatus(); }
-         ha_update_t = millis() + 5000;
+         ha_update_t = millis() + 500;
      }
 }
 
@@ -544,39 +544,39 @@ void rgb_led_flash(int color, int restore_color)
 {
      for(int i = 0; i < 5; i++) {
         rgb_led_set(color);
-        delay(100);
+        delay(50);
         rgb_led_set(RGB_LED_OFF);
-        delay(100);
+        delay(50);
      }
      rgb_led_set(restore_color);
 }
 
 //
 // We have just woken up and are connected to HA. Let's see if we have any pending requests.
-// Well stay here for 30 seconds to see. Then go back to sleep.
+// Well stay here for 1 seconds to see. Then go back to sleep.
 //
 void ha_processPending() {
      //esp_task_wdt_reset();     // All ok
      //
-     uint32_t end_t = millis() + (1000 * 10);   
-     do {
-        if (debug_g) {
-            Serial.printf("----------------------------- wait for HA  msgs ------------------------------------\n");
-            ha_displayPowerStatus();
-            ha_displayColdHotStatus();
-            ha_displayTempStatus();
-            ha_displayFanStatus();
-            ha_displayVaneStatus();
-        }
+     uint32_t end_t = millis() + 1500;   
+     do { 
         rgb_led_flash(RGB_LED_GREEN, RGB_LED_GREEN);
-        delay(500);
+        delay(50);
         //
         // If synch required then send the IR now. Wonder if there is problem with mutual exclusion and
         // callback functions. Are they in same thread? If not this variable is volatile.
         //
         if ((ha_update_t > 0) && (millis() > ha_update_t)) {
             ha_update_t = 0;
-            if (debug_g) Serial.println("Synch with HVAC required\n");
+            if (debug_g) {
+                Serial.printf("----------------------------- wait for HA  msgs ------------------------------------\n");
+                ha_displayPowerStatus();
+                ha_displayColdHotStatus();
+                ha_displayTempStatus();
+                ha_displayFanStatus();
+                ha_displayVaneStatus();
+                Serial.println("Synch with HVAC required\n");
+            }  
             ha_syncHeatPump();
             ha_nvs_write(); 
             rgb_led_flash(RGB_LED_WHITE, RGB_LED_GREEN);   // flash white, return to green
@@ -591,9 +591,9 @@ void ha_processPending() {
 void ha_gotoSleepNow()
 {
 #    define uS_TO_S_FACTOR 1000000ULL /* Conversion factor for micro seconds to seconds */
-     esp_sleep_enable_timer_wakeup(30 * uS_TO_S_FACTOR);
+     esp_sleep_enable_timer_wakeup(45 * uS_TO_S_FACTOR);
      rgb_led_set(RGB_LED_OFF);
-     if (debug_g) { Serial.println("going back to sleep"); delay(2000); }
+     if (debug_g) { Serial.println("going back to sleep"); delay(100); }
      esp_deep_sleep_start();
 }
 
@@ -602,6 +602,7 @@ void ha_gotoSleepNow()
 // and go back to sleep. 
 //
 void setup() {
+     uint32_t start_time_t = millis();
      // 
      // If we don't get watch dog resets each 5 minutes then reboot.
      //
@@ -728,6 +729,11 @@ void setup() {
      // And try to get any pending requests, we'll stay for 30 seconds looking then exit and sleep again.
      //
      ha_processPending();
+     uint32_t total_time = millis() - start_time_t;
+     if (debug_g) {
+         uint32_t total_time_t = millis() - start_time_t;
+         Serial.printf("TOTAL UPTIME = %d ms\n", total_time_t);
+     }
      ha_gotoSleepNow();
 }
 
