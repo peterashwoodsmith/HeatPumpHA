@@ -589,11 +589,14 @@ void ha_processPending() {
 // setup() function. The loop() will never get called.
 //
 void ha_gotoSleepNow()
-{
-#    define uS_TO_S_FACTOR 1000000ULL /* Conversion factor for micro seconds to seconds */
-     esp_sleep_enable_timer_wakeup(45 * uS_TO_S_FACTOR);
+{  
      rgb_led_set(RGB_LED_OFF);
-     if (debug_g) { Serial.println("going back to sleep"); delay(100); }
+     if (debug_g) Serial.println("going back to sleep"); 
+     Zigbee.closeNetwork();
+     Zigbee.stop();
+     delay(100);
+ #   define uS_TO_S_FACTOR 1000000ULL  
+     esp_sleep_enable_timer_wakeup(45 * uS_TO_S_FACTOR);
      esp_deep_sleep_start();
 }
 
@@ -628,7 +631,7 @@ void setup() {
      //
      // Read all the Non volatile variables from last boot.
      //
-     ha_nvs_read();      
+     ha_nvs_read();  
      //
      // Add the zibgee clusters (buttons/sliders etc.)
      //
@@ -682,9 +685,18 @@ void setup() {
      Zigbee.addEndpoint(&zbFanControl);
      Zigbee.addEndpoint(&zbVaneControl);
      //
-     // Create a default Zigbee configuration for End Device
+     // Create a custom Zigbee configuration for End Device with longer timeouts/keepalive
      //
-     esp_zb_cfg_t zigbeeConfig = ZIGBEE_DEFAULT_ED_CONFIG();
+     esp_zb_cfg_t zigbeeConfig =                             \
+       {  .esp_zb_role = ESP_ZB_DEVICE_TYPE_ED,              \
+          .install_code_policy = false,                      \
+          .nwk_cfg = {                                       \
+            .zed_cfg =  {                                    \                                                          
+                .ed_timeout = ESP_ZB_ED_AGING_TIMEOUT_64MIN, \
+                .keep_alive = 60000,                         \
+              },                                             \
+          },                                                 \
+       };
      //
      if (debug_g) Serial.println("Starting Zigbee");
      rgb_led_flash(RGB_LED_ORANGE, RGB_LED_ORANGE);
