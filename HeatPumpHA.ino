@@ -36,9 +36,9 @@
 const int debug_g = 1;
 
 // 
-// Function puts us to sleep, its defined later on but forward declared here.
+// Function complete shutdown and restart.
 //
-extern void ha_gotoSleepNow(); 
+extern void ha_restart(); 
 
 //
 // Interrupt service routines for the reset button, must be 5 seconds between the
@@ -64,11 +64,11 @@ void isr_resetButtonRelease()
      if (isr_resetdepress_t > 0) {
          if ((millis() / 1000) - isr_resetdepress_t > (60 * 5)) {
              nvs_flash_erase();
+             Zigbee.factoryReset(false);
          }
      }
-     Zigbee.factoryReset(false);
      delay(500);
-     ha_gotoSleepNow();
+     ha_restart();
 }
 
 //
@@ -552,13 +552,12 @@ void rgb_led_flash(int color, int restore_color)
 }
 
 //
-// We have just woken up and are connected to HA. Let's see if we have any pending requests.
-// Well stay here for 1 seconds to see. Then go back to sleep.
+// Wait for any pending requests and process them if we find some. Do this for a few seconds and return.
+// We may gets updates requests while we are running so we keep going if they are still comming in.
 //
-void ha_processPending() {
-     //esp_task_wdt_reset();     // All ok
-     //
-     uint32_t end_t = millis() + 2000;   
+void ha_processPending() 
+{
+     uint32_t end_t = millis() + 1000;   
      do { 
         rgb_led_flash(RGB_LED_GREEN, RGB_LED_GREEN);
         delay(50);
@@ -586,18 +585,21 @@ void ha_processPending() {
 
 //
 // Go to sleep for some number of seconds then we will be woken up to start all over again in the
-// setup() function. The loop() will never get called.
+// setup() function. The loop() will never get called. Currently about 45 seconds of sleep and 4.5 seconds
+// awake seems to be what actually works, going to longer sleep gives me timeouts in HA that I need to 
+// to figure out before extending this.
 //
-void ha_gotoSleepNow()
+void ha_restart()
 {  
-     rgb_led_set(RGB_LED_OFF);
-     if (debug_g) Serial.println("going back to sleep"); 
+     rgb_led_set(RGB_LED_OFF);            // Sometimes gets stuck on, don't know why perhaps timing.      
+     delay(100);
+     rgb_led_set(RGB_LED_OFF);            // So do it twice .
+     delay(100);
+     if (debug_g) Serial.println("Restarting..."); 
      Zigbee.closeNetwork();
      Zigbee.stop();
      delay(100);
- #   define uS_TO_S_FACTOR 1000000ULL  
-     esp_sleep_enable_timer_wakeup(60 * uS_TO_S_FACTOR);
-     esp_deep_sleep_start();
+     ESP.restart();
 }
 
 // 
@@ -676,8 +678,8 @@ void setup() {
      zbVaneControl.setAnalogOutputMinMax(0, 6);  
      zbVaneControl.onAnalogOutputChange(ha_setVane);
      //
-     if (debug_g) Serial.println("Set battery power");
-     zbPower.setPowerSource(ZB_POWER_SOURCE_BATTERY, 95, 37);  
+     if (debug_g) Serial.println("Set mains power");
+     zbPower.setPowerSource(ZB_POWER_SOURCE_MAINS);  
      //
      Zigbee.addEndpoint(&zbPower);
      Zigbee.addEndpoint(&zbColdHot);
@@ -710,7 +712,7 @@ void setup() {
         }
         rgb_led_flash(RGB_LED_RED, RGB_LED_RED);
         rgb_led_flash(RGB_LED_RED, RGB_LED_RED);
-        ha_gotoSleepNow();
+        ha_restart();
      }
      //
      // Now connect to network.
@@ -728,7 +730,7 @@ void setup() {
            }
            rgb_led_flash(RGB_LED_ORANGE, RGB_LED_ORANGE);
            rgb_led_flash(RGB_LED_RED, RGB_LED_RED);
-           ha_gotoSleepNow();   // sleep and retry later
+           ha_restart();   
         }
      }
      rgb_led_flash(RGB_LED_BLUE, RGB_LED_BLUE);   
@@ -737,24 +739,14 @@ void setup() {
      // Try to sync with HA (i.e. update from NVS back to HA.)
      //
      ha_sync_status();
-     //
-     // And try to get any pending requests, we'll stay for 30 seconds looking then exit and sleep again.
-     //
-     ha_processPending();
-     uint32_t total_time = millis() - start_time_t;
-     if (debug_g) {
-         uint32_t total_time_t = millis() - start_time_t;
-         Serial.printf("TOTAL UPTIME = %d ms\n", total_time_t);
-     }
-     ha_gotoSleepNow();
 }
 
 //
-// NOTHING TO DO IN MAIN LOOP ITS ALL CALLBACK BASED SO JUST PRINT STATUS but if you disable the sleep
-// you can just stay in the processPending forever.
+// In the loop we just process any pending requests, the requests came via the callbacks.
 //
 void loop()
 {
-     if (debug_g) Serial.println("LOOPING - should not be here if using sleep mode");
+     if (debug_g) Serial.println("loop");
      ha_processPending();
+     delay(1000);
 }
