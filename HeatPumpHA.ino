@@ -1,7 +1,7 @@
 //
 // This ESP32 ARDUINO program is a Zibgee end device that will receive commands to be translated into the IR remote codes for a 
 // MISTUBISHI HEATE PUMP. THis is work in progress for a Home Assistant end point that you attach near the IR sensor of the
-// Mitsubishi heat pump and that can be battery powered.
+// Mitsubishi heat pump and that is mains powered. You can power via CT105 off the heat pump 5v (ideal) or via usb and plug.
 //
 // The code has two major parts. The first is the IR/Mitsibushi send command that takes all the desired settings as arguments.
 // Following that is the zibgee 3.0 Espressif Arduino code to create the end points and their controls (clusters) that select
@@ -18,22 +18,19 @@
 //          Tools/zibgee mode ED (end device)
 //
 //  IN PROGRESS:
-//      - sleep mode expirements, failed to update from HA but does eventually update.
-//
+//      - testing the watch dogs
 //  TODO:
-//      - watch dog for main loop
-//      
-//      - battery min voltage experiments
 //      - cool/heat switch instead of on/off
 //
 #include <esp_task_wdt.h>
+#include <freertos/FreeRTOS.h>
 #include <nvs_flash.h>
 #ifndef ZIGBEE_MODE_ED
 #error "Zigbee end device mode is not selected in Tools->Zigbee mode"
 #endif
 #include "Zigbee.h"
 
-const int debug_g = 0;
+const int debug_g = 1;
 
 // 
 // Function complete shutdown and restart.
@@ -619,8 +616,17 @@ void setup() {
          Serial.println("RiverView S/W Zibgee 3.0 to Mistubishi IR controller");
      }
      //
+     // Watch dog timer on this task to panic if we don't get to main loop regulary.
+     //
+     esp_task_wdt_deinit();
+     esp_task_wdt_config_t wdt_config = {
+          .timeout_ms = 10 * 60 * 1000,                                 // 10 minutes max to get back to main loop()
+          .idle_core_mask = (1 << CONFIG_FREERTOS_NUMBER_OF_CORES) - 1, // Bitmask of all cores
+          .trigger_panic = true };                                      // Enable panic to restart ESP32
+     esp_task_wdt_init(&wdt_config);
+     esp_task_wdt_add(NULL);  //add current thread to WDT watch
+     //
      rgb_led_flash(RGB_LED_RED, RGB_LED_RED);
-
      //
      // Bring up the IR interface & enable interrupts for reset buttons.
      //
@@ -739,9 +745,12 @@ void setup() {
 
 //
 // In the loop we just process any pending requests, the requests came via the callbacks.
+// We use a watch dog timer to make sure we get into this loop at least every 10 minutes or so.
+// If we don't get here in time we will get a hardware reset.
 //
 void loop()
-{    if (!Zigbee.connected()) {
+{    esp_task_wdt_reset();         // Feed the watch dog
+     if (!Zigbee.connected()) {
          if (debug_g) Serial.println("zigbee disconnected while in loop()- restarting");
          ha_restart();   
      }
