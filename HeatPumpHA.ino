@@ -30,7 +30,7 @@
 #endif
 #include "Zigbee.h"
 
-const int debug_g = 1;
+const int debug_g = 0;
 
 // 
 // Function complete shutdown and restart.
@@ -518,7 +518,7 @@ const uint8_t RGB_LED_RED    = 2;
 const uint8_t RGB_LED_GREEN  = 3;
 const uint8_t RGB_LED_BLUE   = 4;
 const uint8_t RGB_LED_ORANGE = 5;
-const uint8_t RGB_MAX        = RGB_BRIGHTNESS;
+const uint8_t RGB_MAX        = RGB_BRIGHTNESS/8;      // Fairly dim or they keep people awake
 const uint8_t RGB_MIN        = 0;
 #define       RGB_ORDER        LED_COLOR_ORDER_RGB    // Compiler problems passing enums, have to be explicit
 //
