@@ -33,7 +33,7 @@
 #endif
 #include "Zigbee.h"
 
-const int debug_g = 1;
+const int debug_g = 0;
 
 // 
 // Function complete shutdown and restart.
@@ -421,7 +421,6 @@ void ha_syncHeatPump()
      if (debug_g) Serial.printf("*** SEND HVAC COMMAND: mode=%d, temp=%d, fan=%d, vane=%d, off=%d ***\n",
                                  hv_mode, hv_temp, hv_fanMode, hv_vanneMode, hv_powerOff);
      ir_sendHvacMitsubishi(hv_mode, hv_temp, hv_fanMode, hv_vanneMode, hv_powerOff);
-     ha_sync_status();   // make sure HA is synced with what we just sent.
 }
 
 //
@@ -559,6 +558,10 @@ void ha_processPending()
 {
      uint32_t end_t = millis() + 1000;   
      do { 
+         if (!Zigbee.connected()) {
+              if (debug_g) Serial.println("zigbee disconnected while in ha_processPending()- restarting");
+              ha_restart();   
+        }
         rgb_led_flash(RGB_LED_GREEN, RGB_LED_GREEN);
         delay(50);
         //
@@ -607,13 +610,6 @@ void ha_restart()
 // and go back to sleep. 
 //
 void setup() {
-     uint32_t start_time_t = millis();
-     // 
-     // If we don't get watch dog resets each 5 minutes then reboot.
-     //
-     //esp_task_wdt_config_t wdt_config = { 1000*60*60*5, (1 << CONFIG_FREERTOS_NUMBER_OF_CORES) - 1, true };
-     //esp_task_wdt_init(&wdt_config);
-     //esp_task_wdt_add(NULL);
      //
      // Debug stuff
      //
@@ -721,7 +717,7 @@ void setup() {
      int tries = 0;      
      while (!Zigbee.connected()) {
         rgb_led_flash(RGB_LED_BLUE, RGB_LED_BLUE);   // the led sets have delays built in
-        delay(500);
+        delay(5000);
         if (debug_g) Serial.println("connecting..\n");
         if (tries ++ > 120) {
            if (debug_g) {
@@ -745,8 +741,11 @@ void setup() {
 // In the loop we just process any pending requests, the requests came via the callbacks.
 //
 void loop()
-{
-     if (debug_g) Serial.println("loop");
+{    if (!Zigbee.connected()) {
+         if (debug_g) Serial.println("zigbee disconnected while in loop()- restarting");
+         ha_restart();   
+     }
+     if (debug_g) Serial.println("loop()");
      ha_processPending();
      delay(1000);
 }
