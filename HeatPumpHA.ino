@@ -74,7 +74,7 @@ void isr_resetButtonRelease()
 void isr_setup()
 {    
      isr_resetdepress_t = 0;
-     const unsigned int resetButton = 11;
+     const unsigned int resetButton = 18;
      pinMode(resetButton, INPUT_PULLUP);
      attachInterrupt(digitalPinToInterrupt(resetButton), isr_resetButtonPress,   FALLING); // Pullup is grounded it falls
      attachInterrupt(digitalPinToInterrupt(resetButton), isr_resetButtonRelease, RISING);  // Ground released it rises.
