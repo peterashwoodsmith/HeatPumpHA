@@ -1,26 +1,102 @@
 //
 // This ESP32 ARDUINO program is a Zibgee end device that will receive commands to be translated into the IR remote codes for a 
 // MISTUBISHI HEATE PUMP. THis is work in progress for a Home Assistant end point that you attach near the IR sensor of the
-// Mitsubishi heat pump and that is mains powered. You can power via CT105 off the heat pump 5v (ideal) or via usb and plug.
+// Mitsubishi heat pump and that is mains powered. This can be powered by USB, or 5V etc. A battery version that sleeps is also
+// possible but there are challanges with the sleep duration required to keep the power use down and Home Assistant timeouts.
 //
 // The code has two major parts. The first is the IR/Mitsibushi send command that takes all the desired settings as arguments.
 // Following that is the zibgee 3.0 Espressif Arduino code to create the end points and their controls (clusters) that select
-// the various parameters or the heat pump. This code is just from the HVAC IR Control project:
+// the various parameters for the heat pump. This IR code is just from the HVAC IR Control project and credit goes to Vincent Cruvellier
+// and the other folks that decoded the Mitsibushi IR packets. Their code is mostly as on their git page however compiler problems
+// with passing single byte enums caused me grief so I had to de-enum their code and use good old #defines. 
+// The Zibgee code is loosly based on some of the Espressif Arduino examples and lots of trial and error experiments. Sadly I was 
+// unable to use better clusters than binary and analog, all the other choices caused problems or did not work. Ideally it should
+// use multi value (enum type) clusters for the fans/vanes but thats for future.
 //       
 //     PARTA     https://github.com/r45635/HVAC-IR-Control ,           (c)  Vincent Cruvellier
 //     PARTB     https://github.com/peterashwoodsmith/HeatPumpHA       (c)  Peter Ashwood-Smith Dec 2025 
 //
-// Building this code in Arduino IDE requires setting
-//          Tools/USB CDC on boot - enabled (allows serial IO for debugging)
-//          Tools/Core debug level (set as desired useful for debugging zibbee attach etc.)
-//          Tools/Erase all flash before upload
-//          Tools/partition scheme: 4MB with spiffs
-//          Tools/zibgee mode ED (end device)
+// HARDWARE:
+//          Waveshare ESP32-C6 but should work on any ESP32 that supports Zibgee and has an RGB Led for status indication.
+//          Push button for the reset option, any momentarily on push button will work.
+//          IR 38Khz. Transmitter module - I used a DUTTY 38khz but no doubt anything of proper freq/power will work.
 //
-//  IN PROGRESS:
-//      - testing the watch dogs
+//          The IR board is connected to +5V power pin and GND but it works on 3.3V pin also (although range is reduced at 
+//          the lower voltage, in any case this device is designed to be right up against the Heat Pump IR sensor). 
+//          The signal pin to drive the IR module is GPIO10 but any other pin should work as long as its not used for
+//          other purposes by the board.
+//          The reset button is connected to GPIO18 and Ground, this is convenient because they are one pin separated
+//          so you can just solder a reset button between them but any pin and ground should work.
+//
+// BUILD NOTES:
+//          I built this on a Mac and had problems with the USB driver. Waveshare has a nice page describing how to put a new
+//          driver on your Mac which worked perfectly. Without it one of my boards refused to load the code via Arduino but 
+//          surprise a bunch of other boards worked just fine. Anyway if you get CRC errors downlaoding, try lower speeds and if that
+//          fails pop over to Waveshare and lookup the USB driver problem.
+//
+//          ARDUINO IDE TOOLS SETTINGS:
+//          You need to set a number of settings in the Arduino IDE/Tools menu for this to work properly.
+//              1 - Tools/USB CDC on boot - enabled (allows serial IO for debugging).
+//              2 - Tools/Core debug level (set as desired useful for debugging zibbee attach etc.) start verbose.
+//              3 - Tools/Erase all flash before upload - this means each download its a brand new Zibgee end point.
+//                  Id erase for first few downloads and always delete/reattach but after its working don't erease the
+//                  flash each time. Once its working you can erase the flash and start scratch with a long press on the
+//                  reset button anyway.
+//              3 - Tools/partition scheme: 4MB with spiffs - seems to be what the Zibgee library wants.
+//              4 - Tools/zibgee mode ED (end device) - you can also use the end mode with debug enabled for more tracing.
+//
+// SOFTWARE:
+//          There is a debug variable you can set 1/0 for serial I/O debugging. Start 1 turn off later.
+//          On initial startup the code will start a watch dog timer just in case. This will cause a panic reset if the main
+//          loop() is not entered frequently enough indicating something got stuck. The main loop() of course 'feeds' this watch
+//          dog.
+//          Next we read the non volatile storage to see if we have previously saved values for the attributes that need to be 
+//          restored. THis is because Zibgee/HA does not seem to refresh them when we restart. Presumably there is a way to force this
+//          but I've not found it with a few weeks of playing. 
+//          Next we setup interrupt handlers for the reset button. Basically if reset is pressed we isue a reset to the ESP, however
+//          if the reset button is held for more than 5 seconds not only do we reset but we erase the non volatile memory which will
+//          cause the end point to forget any ziggee related information and it will have to rebind. If you do this you need to
+//          delete the device from home assistant and go back into zigbee discover mode to refind this end point. So again, quick tap
+//          on reset and it just reboots and rebinds, longer tap it has to go through discovery again.
+//          We use the RGB Led to indicate whats going on. Red flashing as it first boots, orange as its getting ready to attach to the
+//          zigbee network and then blue flashing as its trying to bind with the zibgee network and finally green flashing as its in the
+//          main loop() waiting for HA to ask it to do something.
+//          In the setup() code we will create the zibbee end points one for each of the clusters/attributes we want to control.
+//          These are using the Espressif Arduino interface which is high level but not well documented. Essentially you create the
+//          objects and a callback to set each parameter and then bind them to zibgee and wait for it to connect. After that its all
+//          callbacks.
+//          In the callbacks we just remember the attribute changes which are processed later in the main loop().
+//          In the main loop we look for any attribute changes and if so call the IR send routine. 
+//          After sending the packet with the IR routing we write the attributes to non volatile storage in case of a power interruption
+//          Or sleep (in future versions).
+//          After we send the IR packet we do a quick white flash of the RGB led then its back to green waiting.
+//
+//  Home Assistant Notes:
+//          As a Zibgee device you need to put the Zibgee in device search mode. If all goes well when the ESP32 boots it will flash 
+//          red orange then blue and stay blue until you see Home Assistant show the device has connected etc. at which point it 
+//          will flash green. Once its bound you can reset the ESP32 via power etc. and it will reattach fast and remember what ever
+//          name you gave it. Initial binding can take a few minutes. Any problems just long press to erase the NVS and delete the 
+//          device from HA and go back into device discorvery on HA to let it rebind. Sometimes being close to the HA/Zibbee dongle
+//          helps so if its cause problem, erase the NVS, delete the device from HA and move close to your dongle to retry. I suspect 
+//          the dongles and HA notice devices trying to attach too frequently and back off a bit so sometimes waiting a few minutes to
+//          retry gives you a quik attach.
+// 
 //  TODO:
-//      - cool/heat switch instead of on/off
+//          Need to work on battery version and long duration sleep. Problem with this is the HA timeouts and I need to understand how
+//          to make HA not try to send when its clearly sleeping. Probably explained in some document somewhere but have not found it yet.
+//          Identify callback should probably flash the LED through rainbow colors or something. Easy enough to do but Arduino Zibgee
+//          objects don't seem to support this callback, or I missed it.
+//          ESP32-H version (i.e. non Wifi / smaller chip);
+//          Will probably look at the serial interface to the Mitsubishi too at some point but direct connect to the Heat Pump is a 
+//          warranty violation so this has to be done with caution and after warranty expires. I have no idea if Mistibuish can log 
+//          a serial device connecting or not. So caution here. The ESP32-C6 can do wifi too so no reason it cannot do the serial connect
+//          via WIFI or via Zibgee in the future. Well see.
+//
+//  NOTES:
+//          I make no claims that this even works, or that your entire house won't explode if you use it. Nobody should ever use this 
+//          for anything serious ever. This is for educational purposes only.
+//
+//          Enjoy. Peter Ashwood-Smith
 //
 #include <esp_task_wdt.h>
 #include <freertos/FreeRTOS.h>
@@ -30,52 +106,65 @@
 #endif
 #include "Zigbee.h"
 
+//
+// Set 1 and you'll get lots of useful info as it runs. For debugging the lower layer Zibgee see the tools settings
+// in the Arduino menu for use with the debug enabled library and debug levels in that core.
+//
 const int debug_g = 0;
 
 // 
-// Function complete shutdown and restart.
+// Function complete shutdown and restart. Forward declared.
 //
 extern void ha_restart(); 
 
 //
 // Interrupt service routines for the reset button, must be 5 seconds between the
-// depress event and the release event.
+// depress event and the release event. Perhaps this should ve volatile but got strange
+// compile problems when declaring volatile. 
 //
 unsigned isr_resetdepress_t = 0;
 
 //
-// Reset button just pressed so record seconds since reboot.
+// Interrupt service for the Reset button just pressed 'DOWN' so record seconds since reboot.
+// No actual action is taken until the Reset button goes back up. Note this is not the board's 
+// built in reset button, this is the button that you added to reset the Zibgee or factory
+// reset the Zibgee End point.
 //
 void isr_resetButtonPress()
 {
-     isr_resetdepress_t = (millis() / 1000);
+     isr_resetdepress_t = (millis() / 1000);     // remember when button was pressed in seconds.
 }
 
 //
-// Reset button just released so look to see if we have at least 5 seconds elapsed between
+// Interrupt handler for Reset button just released so look to see if we have at least 5 seconds elapsed between
 // the two. If we do, then we clear the non volatile storage and reboot, otherwise just
-// reboot.
+// reboot. Clearing the NVS will cause a factory reset as we won't know any zibgee parameters and must rediscover
+// everything. If you do this reset make sure to delete the device on Home Assistant and go back into device 
+// descover mode.
 //
 void isr_resetButtonRelease()
 {
-     if (isr_resetdepress_t > 0) {
-         if ((millis() / 1000) - isr_resetdepress_t > (60 * 5)) {
-             nvs_flash_erase();
-             Zigbee.factoryReset(false);
+     if (isr_resetdepress_t > 0) {                              // If the reset was previously pressed down but not released.
+         if (((millis() / 1000) - isr_resetdepress_t) > 5) {    // If its been more than 5 seconds since down event
+             nvs_flash_erase();                                 // complete factory reset, get rid of all persistent memory
+             Zigbee.factoryReset(false);                        // This should do the same but not sure it does anyway ...
          }
      }
-     delay(500);
-     ha_restart();
+     delay(500);                                                // Little Pause.
+     ha_restart();                                              // And stop all the Zigbee stuff and just restart the ESP
 }
 
 //
-// Setup the Interrupt service routing for the reset button. We have a falling and rising to detect press/release
-// of this buton.
+// Setup the Interrupt service routine for the reset button. We have a falling and rising to detect press/release
+// of this buton. Basically atach a Press handler and a release handler, one on the FALLING and one on the RISING
+// voltage. Since the buton is put in PULLUP mode, it is pulled high normally so the buton press ground it (FALLING)
+// and the release allows it to go back to high voltage via the internal pullup hence RISING.
+//
 void isr_setup()
 {    
-     isr_resetdepress_t = 0;
-     const unsigned int resetButton = 18;
-     pinMode(resetButton, INPUT_PULLUP);
+     isr_resetdepress_t = 0;                        // Time of button press (should be volatile but problems...)
+     const unsigned int resetButton = 18;           // We use pin 18 connected to one side of button, and ground to other side.
+     pinMode(resetButton, INPUT_PULLUP);            // Pullup so GROUNDing cause FALLING and ungrounding causes RISING interrupts.
      attachInterrupt(digitalPinToInterrupt(resetButton), isr_resetButtonPress,   FALLING); // Pullup is grounded it falls
      attachInterrupt(digitalPinToInterrupt(resetButton), isr_resetButtonRelease, RISING);  // Ground released it rises.
 }
@@ -84,15 +173,17 @@ void isr_setup()
 //
 // These are the Infra red parameters used to determine intervals and which I/O pin to use to drive the IR board.
 // 
-int ir_halfPeriodicTime;
-int ir_pin;
-int ir_khz;
+int ir_halfPeriodicTime;         // Set based on frequency.
+int ir_pin;                      // Pin used to drive the IR signal, we use GPIO10, any pin will work.
+int ir_khz;                      // Set based on speed.
 
 // 
-//  IR code used in the Mitsubish IR protocol.
+// IR code used in the Mitsubish IR protocol. Essentially the IR protocol is a single 18 byte packet which is transmited bit by bit
+// and which the Mitsubishi will read, check the checksum and if its happy with the packet it will beep. Ideally we'd listen for the
+// beep and resend if we don't get it.
 //
-#define HVAC_MITSUBISHI_HDR_MARK    3400
-#define HVAC_MITSUBISHI_HDR_SPACE   1750
+#define HVAC_MITSUBISHI_HDR_MARK    3400          // Millisecond duration for the header 1 bit
+#define HVAC_MITSUBISHI_HDR_SPACE   1750          // Millisecond duration for the header 0 bit
 #define HVAC_MITSUBISHI_BIT_MARK    450
 #define HVAC_MITSUBISHI_ONE_SPACE   1300
 #define HVAC_MISTUBISHI_ZERO_SPACE  420
@@ -100,12 +191,12 @@ int ir_khz;
 #define HVAC_MITSUBISHI_RPT_SPACE   17100 
 //                                      
 #define HVAC_MODE_HOT               0             // Enums doing wierd things with compiler, eliminate
-#define HVAC_MODE_COLD              1
+#define HVAC_MODE_COLD              1             // Mode options, we just support hot/cold for moment.
 #define HVAC_MODE_DRY               2
 #define HVAC_MODE_FAN               3
 #define HVAC_MODE_AUTO              4
 //
-#define HVAC_FANMODE_SPEED_1        0
+#define HVAC_FANMODE_SPEED_1        0             // Fan speeds etc.
 #define HVAC_FANMODE_SPEED_2        1
 #define HVAC_FANMODE_SPEED_3        2
 #define HVAC_FANMODE_SPEED_4        3
@@ -113,7 +204,7 @@ int ir_khz;
 #define HVAC_FANMODE_SPEED_AUTO     5
 #define HVAC_FANMODE_SPEED_SILENT   6
 //
-#define HVAC_VANEMODE_AUTO          0
+#define HVAC_VANEMODE_AUTO          0             // Vane modes etc.
 #define HVAC_VANEMODE_H1            1
 #define HVAC_VANEMODE_H2            2
 #define HVAC_VANEMODE_H3            3
@@ -123,14 +214,16 @@ int ir_khz;
 
 //
 // Send IR command to Mitsubishi HVAC - ir_sendHvacMitsubishi, this will generate a single 18 byte packet containing the desired
-// mode, temperature, fan behaior, vane behavior and on/off setting.
+// mode, temperature, fan behaior, vane behavior and on/off setting and checksum. The HVAC will beep if its happy. Ideally we'd listen
+// for the beep but we could also send it a few times for added reliability but it seems extremely reliable when placed within a few
+// cm of the HVAC receiver.
 //
 void ir_sendHvacMitsubishi(
-  int                     HVAC_Mode,           // Example HVAC_HOT  HvacMitsubishiMode
-  int                     HVAC_Temp,           // Example 21  (°c)
-  int                     HVAC_FanMode,        // Example FAN_SPEED_AUTO  HvacMitsubishiFanMode
-  int                     HVAC_VaneMode,       // Example VANNE_AUTO_MOVE  HvacMitsubishiVaneMode
-  int                     HVAC_powerOff        // Example false
+  int                     HVAC_Mode,            
+  int                     HVAC_Temp,            
+  int                     HVAC_FanMode,         
+  int                     HVAC_VaneMode,        
+  int                     HVAC_powerOff         
 )
 {
   byte mask = 1; //our bitmask
@@ -712,7 +805,7 @@ void setup() {
             Serial.println("Zigbee failed to start!");
             Serial.println("Rebooting ESP32!");
         }
-        rgb_led_flash(RGB_LED_RED, RGB_LED_RED);
+        rgb_led_flash(RGB_LED_RED, RGB_LED_RED);  // Sometimes it stays orange
         rgb_led_flash(RGB_LED_RED, RGB_LED_RED);
         ha_restart();
      }
