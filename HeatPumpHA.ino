@@ -26,7 +26,8 @@
 //          The signal pin to drive the IR module is GPIO10 but any other pin should work as long as its not used for
 //          other purposes by the board.
 //          The reset button is connected to GPIO18 and Ground, this is convenient because they are one pin separated
-//          so you can just solder a reset button between them but any pin and ground should work.
+//          so you can just solder a reset button between them but any pin and ground should work. This is used to trigger a 
+//          factory reset, normal reset just power cycle the board.
 //
 // BUILD NOTES:
 //          I built this on a Mac and had problems with the USB driver. Waveshare has a nice page describing how to put a new
@@ -53,11 +54,11 @@
 //          Next we read the non volatile storage to see if we have previously saved values for the attributes that need to be 
 //          restored. THis is because Zibgee/HA does not seem to refresh them when we restart. Presumably there is a way to force this
 //          but I've not found it with a few weeks of playing. 
-//          Next we setup interrupt handlers for the reset button. Basically if reset is pressed we isue a reset to the ESP, however
-//          if the reset button is held for more than 5 seconds not only do we reset but we erase the non volatile memory which will
-//          cause the end point to forget any ziggee related information and it will have to rebind. If you do this you need to
-//          delete the device from home assistant and go back into zigbee discover mode to refind this end point. So again, quick tap
-//          on reset and it just reboots and rebinds, longer tap it has to go through discovery again.
+//          Next we setup interrupt handlers for the reset button. Basically if reset is pressed we isue a reset to the ESP but we
+//          also we erase the non volatile memory which will cause the end point to forget any ziggee related information and it
+//          will have to rebind. If you do this you need to
+//          delete the device from home assistant and go back into zigbee discover mode to refind this end point. For a normal
+//          non factory reset just power cycle or use the ESP32 reset button.
 //          We use the RGB Led to indicate whats going on. Red flashing as it first boots, orange as its getting ready to attach to the
 //          zigbee network and then blue flashing as its trying to bind with the zibgee network and finally green flashing as its in the
 //          main loop() waiting for HA to ask it to do something.
@@ -113,60 +114,31 @@
 const int debug_g = 0;
 
 // 
-// Function complete shutdown and restart. Forward declared.
+// Function complete shutdown and restart. Forward declared also a flash sequence for factory reset.
 //
 extern void ha_restart(); 
+extern void rgb_led_set_factory_reset();
 
 //
-// Interrupt service routines for the reset button, must be 5 seconds between the
-// depress event and the release event. Perhaps this should ve volatile but got strange
-// compile problems when declaring volatile. 
-//
-unsigned isr_resetdepress_t = 0;
-
-//
-// Interrupt service for the Reset button just pressed 'DOWN' so record seconds since reboot.
-// No actual action is taken until the Reset button goes back up. Note this is not the board's 
-// built in reset button, this is the button that you added to reset the Zibgee or factory
-// reset the Zibgee End point.
+// Interrupt handler for Reset button. If its pressed we do full factory reset. Normal reset is just done with a power off/on.
 //
 void isr_resetButtonPress()
-{
-     isr_resetdepress_t = (millis() / 1000);     // remember when button was pressed in seconds.
+{      
+     rgb_led_set_factory_reset();                       // Go white so its obvious
+     nvs_flash_erase();                                 // complete factory reset, get rid of all persistent memory
+     Zigbee.factoryReset(false);                        // This should do the same but not sure it does anyway ...
+     ha_restart();                                      // And stop all the Zigbee stuff and just restart the ESP
 }
 
 //
-// Interrupt handler for Reset button just released so look to see if we have at least 5 seconds elapsed between
-// the two. If we do, then we clear the non volatile storage and reboot, otherwise just
-// reboot. Clearing the NVS will cause a factory reset as we won't know any zibgee parameters and must rediscover
-// everything. If you do this reset make sure to delete the device on Home Assistant and go back into device 
-// descover mode.
-//
-void isr_resetButtonRelease()
-{
-     if (isr_resetdepress_t > 0) {                              // If the reset was previously pressed down but not released.
-         if (((millis() / 1000) - isr_resetdepress_t) > 5) {    // If its been more than 5 seconds since down event
-             nvs_flash_erase();                                 // complete factory reset, get rid of all persistent memory
-             Zigbee.factoryReset(false);                        // This should do the same but not sure it does anyway ...
-         }
-     }
-     delay(500);                                                // Little Pause.
-     ha_restart();                                              // And stop all the Zigbee stuff and just restart the ESP
-}
-
-//
-// Setup the Interrupt service routine for the reset button. We have a falling and rising to detect press/release
-// of this buton. Basically atach a Press handler and a release handler, one on the FALLING and one on the RISING
-// voltage. Since the buton is put in PULLUP mode, it is pulled high normally so the buton press ground it (FALLING)
-// and the release allows it to go back to high voltage via the internal pullup hence RISING.
+// Setup the Interrupt service routine for the reset button. Just call the isr_resetButtonPress routing when the pin goes LOW.
+// This triggers a factory reset.
 //
 void isr_setup()
-{    
-     isr_resetdepress_t = 0;                        // Time of button press (should be volatile but problems...)
-     const unsigned int resetButton = 18;           // We use pin 18 connected to one side of button, and ground to other side.
-     pinMode(resetButton, INPUT_PULLUP);            // Pullup so GROUNDing cause FALLING and ungrounding causes RISING interrupts.
-     attachInterrupt(digitalPinToInterrupt(resetButton), isr_resetButtonPress,   FALLING); // Pullup is grounded it falls
-     attachInterrupt(digitalPinToInterrupt(resetButton), isr_resetButtonRelease, RISING);  // Ground released it rises.
+{    const unsigned int isr_resetButton = 18;               // We use pin 18 connected to one side of button, and ground to other side.   
+     pinMode(isr_resetButton, INPUT_PULLUP);                // Pullup so GROUNDing cause FALLING and ungrounding causes RISING interrupts.
+     //
+     attachInterrupt(digitalPinToInterrupt(isr_resetButton), isr_resetButtonPress,   FALLING);  
 }
 
 // PART A
@@ -638,6 +610,15 @@ void rgb_led_flash(int color, int restore_color)
         delay(50);
      }
      rgb_led_set(restore_color);
+}
+
+//
+// We are in an interrupt handler for the reset button and will indicate a factory reset.
+// Just use white for now.
+//
+void rgb_led_set_factory_reset()
+{
+     rgb_led_set(RGB_LED_WHITE);
 }
 
 //
