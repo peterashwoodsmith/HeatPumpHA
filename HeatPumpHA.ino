@@ -111,7 +111,7 @@
 // Set 1 and you'll get lots of useful info as it runs. For debugging the lower layer Zibgee see the tools settings
 // in the Arduino menu for use with the debug enabled library and debug levels in that core.
 //
-const int debug_g = 0;
+bool debug_g = false;
 
 // 
 // Function complete shutdown and restart. Forward declared also a flash sequence for factory reset.
@@ -622,6 +622,26 @@ void rgb_led_set_factory_reset()
 }
 
 //
+// Called when device is asked to identify itself. We will just flash alternating white and green for 1/2 second or so.
+//
+void ha_identify(uint16_t x)
+{
+     if (debug_g) Serial.printf("******** HA => IDENTIFY(%d) ******\n", (int) x);
+     //
+     rgb_led_flash(RGB_LED_WHITE, RGB_LED_WHITE);
+     delay(100);
+     rgb_led_flash(RGB_LED_GREEN, RGB_LED_GREEN);
+     delay(100);
+     rgb_led_flash(RGB_LED_WHITE, RGB_LED_WHITE);
+     delay(100); 
+     rgb_led_flash(RGB_LED_GREEN, RGB_LED_GREEN);
+     delay(100);
+     rgb_led_flash(RGB_LED_WHITE, RGB_LED_WHITE);
+     delay(100); 
+     rgb_led_set(RGB_LED_GREEN);
+}
+
+//
 // Wait for any pending requests and process them if we find some. Do this for a few seconds and return.
 // We may gets updates requests while we are running so we keep going if they are still comming in.
 //
@@ -633,7 +653,6 @@ void ha_processPending()
               if (debug_g) Serial.println("zigbee disconnected while in ha_processPending()- restarting");
               ha_restart();   
         }
-        rgb_led_flash(RGB_LED_GREEN, RGB_LED_GREEN);
         delay(50);
         //
         // If synch required then send the IR now. Wonder if there is problem with mutual exclusion and
@@ -686,7 +705,7 @@ void setup() {
      //
      if (debug_g) {
          Serial.begin(115200);
-         delay(100);
+         delay(1000);
          Serial.println("RiverView S/W Zibgee 3.0 to Mistubishi IR controller");
      }
      //
@@ -755,7 +774,8 @@ void setup() {
      zbVaneControl.onAnalogOutputChange(ha_setVane);
      //
      if (debug_g) Serial.println("Set mains power");
-     zbPower.setPowerSource(ZB_POWER_SOURCE_MAINS);  
+     zbPower.setPowerSource(ZB_POWER_SOURCE_MAINS); 
+     zbPower.onIdentify(ha_identify);
      //
      Zigbee.addEndpoint(&zbPower);
      Zigbee.addEndpoint(&zbColdHot);
@@ -823,12 +843,21 @@ void setup() {
 // If we don't get here in time we will get a hardware reset.
 //
 void loop()
-{    esp_task_wdt_reset();         // Feed the watch dog
+{    static int ix = 0;            // Loop counter 0..4 for LED on/of flash choice.
+     esp_task_wdt_reset();         // Feed the watch dog
      if (!Zigbee.connected()) {
          if (debug_g) Serial.println("zigbee disconnected while in loop()- restarting");
          ha_restart();   
      }
      if (debug_g) Serial.println("loop()");
+     //
+     // Alternate GREEN/BLACK every loop instance. This is green for one second every 10 seconds or so.
+     //
+     rgb_led_set(ix != 0 ? RGB_LED_OFF : RGB_LED_GREEN);
+     ix = (ix + 1) % 5;
+     // 
+     // Do any pending work for about a second if there is some.
+     //
      ha_processPending();
      delay(1000);
 }
