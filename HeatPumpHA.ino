@@ -713,11 +713,11 @@ void setup() {
      //
      esp_task_wdt_deinit();
      esp_task_wdt_config_t wdt_config = {
-          .timeout_ms = 10 * 60 * 1000,                                 // 10 minutes max to get back to main loop()
+          .timeout_ms = 30 * 60 * 1000,                                 // 30 minutes max to get back to main loop()
           .idle_core_mask = (1 << CONFIG_FREERTOS_NUMBER_OF_CORES) - 1, // Bitmask of all cores
           .trigger_panic = true };                                      // Enable panic to restart ESP32
      esp_task_wdt_init(&wdt_config);
-     esp_task_wdt_add(NULL);  //add current thread to WDT watch
+     esp_task_wdt_add(NULL);                                            //add current thread to WDT watch
      //
      rgb_led_flash(RGB_LED_RED, RGB_LED_RED);
      //
@@ -733,7 +733,7 @@ void setup() {
      // Add the zibgee clusters (buttons/sliders etc.)
      //
      if (debug_g) Serial.println("On of Power switch cluster");
-     zbPower.setManufacturerAndModel("RiverView", "ZigbeeToHvacIR");
+     zbPower.setManufacturerAndModel("RiverView", "MitsuIR");
      zbPower.addBinaryOutput();
      zbPower.setBinaryOutputApplication(BINARY_OUTPUT_APPLICATION_TYPE_HVAC_OTHER);
      zbPower.setBinaryOutputDescription("Off => On");
@@ -816,15 +816,15 @@ void setup() {
      if (debug_g) Serial.println("Connecting to network");   
      int tries = 0;      
      while (!Zigbee.connected()) {
-        rgb_led_flash(RGB_LED_BLUE, RGB_LED_BLUE);   // the led sets have delays built in
+        rgb_led_flash(RGB_LED_BLUE, RGB_LED_BLUE);         // the led sets have delays built in
         delay(5000);
         if (debug_g) Serial.println("connecting..\n");
-        if (tries ++ > 120) {
+        if (tries ++ > 360) {                              // Maximum 30 minutes trying    
            if (debug_g) {
                Serial.println("Zigbee failed to connect!");
                Serial.println("Rebooting ESP32!");
            }
-           rgb_led_flash(RGB_LED_ORANGE, RGB_LED_ORANGE);
+           rgb_led_flash(RGB_LED_ORANGE, RGB_LED_ORANGE);  // We tried for 30 minutes, restart.
            rgb_led_flash(RGB_LED_RED, RGB_LED_RED);
            ha_restart();   
         }
