@@ -482,6 +482,12 @@ void ha_syncHeatPump()
      //
      if (debug_g) Serial.printf("*** SEND HVAC COMMAND: mode=%d, temp=%d, fan=%d, vane=%d, off=%d ***\n",
                                  hv_mode, hv_temp, hv_fanMode, hv_vanneMode, hv_powerOff);
+     //                         
+     // Send the IR command twice with 1 second between sends. Just to add level of redundancy.
+     // Mitsubishi will beep twice.
+     //
+     ir_sendHvacMitsubishi(hv_mode, hv_temp, hv_fanMode, hv_vanneMode, hv_powerOff);
+     delay(1000);
      ir_sendHvacMitsubishi(hv_mode, hv_temp, hv_fanMode, hv_vanneMode, hv_powerOff);
 }
 
